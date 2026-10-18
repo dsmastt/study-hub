@@ -1,0 +1,546 @@
+#!/usr/bin/env bash
+# Study Hub launcher for Hyprland + Caelestia.
+# Creates a session record, starts the local server if needed, opens the four
+# study workspaces, and moves browser windows without duplicating them.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/study-hub"
+CONFIG="$CONFIG_DIR/launcher.json"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/study-hub"
+STATE="$STATE_DIR/windows.json"
+LOG="$STATE_DIR/study.log"
+DRY_RUN=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help)
+      cat <<'HELP'
+study — launch the Study Hub environment
+
+Usage:
+  study             Start the server/session and arrange the four study workspaces.
+  study --dry-run   Print detected windows/workspaces and planned actions only.
+
+Config:
+  ~/.config/study-hub/launcher.json
+
+Docs:
+  See README.md in the Study Hub repository.
+HELP
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg (try study --help)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+mkdir -p "$CONFIG_DIR" "$STATE_DIR"
+[[ -f "$STATE" ]] || printf '{}\n' > "$STATE"
+
+log() {
+  printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
+}
+
+notify() {
+  local title="$1" body="$2"
+  if command -v notify-send >/dev/null 2>&1 && [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
+    notify-send -a "Study Hub" "$title" "$body" >/dev/null 2>&1 || true
+  fi
+}
+
+die() {
+  echo "study: $*" >&2
+  log "ERROR: $*"
+  notify "Study Hub failed" "$*"
+  exit 1
+}
+
+command -v jq >/dev/null 2>&1 || die "jq is required (install jq)."
+command -v curl >/dev/null 2>&1 || die "curl is required."
+
+if [[ ! -f "$CONFIG" ]]; then
+  if [[ -f "$ROOT/config/launcher.example.json" ]]; then
+    cp "$ROOT/config/launcher.example.json" "$CONFIG"
+    echo "Created launcher config: $CONFIG"
+  else
+    die "Launcher config missing and no example template found at $ROOT/config/launcher.example.json"
+  fi
+fi
+
+jq empty "$CONFIG" >/dev/null 2>&1 || die "Invalid JSON in $CONFIG"
+
+BROWSER_CMD="$(jq -r '.browser.command // "zen-browser"' "$CONFIG")"
+NEW_WINDOW_FLAG="$(jq -r '.browser.newWindowFlag // "--new-window"' "$CONFIG")"
+HOST="$(jq -r '.server.host // "127.0.0.1"' "$CONFIG")"
+PORT="$(jq -r '.server.port // 1737' "$CONFIG")"
+DATA_DIR="$(jq -r '.server.dataDir // empty' "$CONFIG")"
+START_SERVER="$(jq -r 'if .server.startIfNeeded == null then true else .server.startIfNeeded end' "$CONFIG")"
+STRATEGY="$(jq -r '.occupiedStrategy // "overflow"' "$CONFIG")"
+OVERFLOW_ENABLED="$(jq -r 'if .overflow.enabled == null then true else .overflow.enabled end' "$CONFIG")"
+OVERFLOW_START="$(jq -r '.overflow.start // 5' "$CONFIG")"
+FOCUS_WORKSPACE="$(jq -r '.focusWorkspace // 1' "$CONFIG")"
+WAIT_MS="$(jq -r '.windowWaitMs // 9000' "$CONFIG")"
+LAUNCH_DELAY_MS="$(jq -r '.launchDelayMs // 350' "$CONFIG")"
+CREATE_SESSION="$(jq -r 'if .createSession == null then true else .createSession end' "$CONFIG")"
+BASE_URL="http://${HOST}:${PORT}"
+EXPECTED_DATA_DIR="$ROOT/data"
+if [[ -n "$DATA_DIR" && "$DATA_DIR" != "null" ]]; then
+  case "$DATA_DIR" in
+    /*) EXPECTED_DATA_DIR="$DATA_DIR" ;;
+    *) EXPECTED_DATA_DIR="$ROOT/$DATA_DIR" ;;
+  esac
+fi
+TOKEN_FILE="$EXPECTED_DATA_DIR/.api-token"
+
+if [[ "$STRATEGY" != "overflow" && "$STRATEGY" != "relocate" && "$STRATEGY" != "use" ]]; then
+  die "occupiedStrategy must be overflow, relocate or use (got: $STRATEGY)"
+fi
+
+# Resolve browser, falling back gracefully.
+BROWSER_BIN=""
+if command -v "$BROWSER_CMD" >/dev/null 2>&1; then
+  BROWSER_BIN="$(command -v "$BROWSER_CMD")"
+else
+  while IFS= read -r candidate; do
+    [[ -z "$candidate" ]] && continue
+    if command -v "$candidate" >/dev/null 2>&1; then
+      BROWSER_BIN="$(command -v "$candidate")"
+      echo "Preferred browser '$BROWSER_CMD' not found; using '$candidate'."
+      break
+    fi
+  done < <(jq -r '.browser.fallback[]? // empty' "$CONFIG")
+fi
+[[ -n "$BROWSER_BIN" ]] || echo "Warning: no supported browser found; windows cannot be opened." >&2
+
+HYPR_OK=0
+HYPR_LUA=0
+if command -v hyprctl >/dev/null 2>&1 && hyprctl version >/dev/null 2>&1; then
+  HYPR_OK=1
+  if hyprctl eval 'return 1' >/dev/null 2>&1; then
+    HYPR_LUA=1
+  fi
+else
+  echo "Warning: Hyprland/hyprctl not available. The server/session will still be prepared."
+fi
+
+get_clients() {
+  if [[ "$HYPR_OK" == "1" ]]; then
+    hyprctl clients -j 2>/dev/null || echo '[]'
+  else
+    echo '[]'
+  fi
+}
+
+client_count() {
+  get_clients | jq 'length' 2>/dev/null || echo 0
+}
+
+client_exists() {
+  local address="$1"
+  [[ -n "$address" ]] || return 1
+  get_clients | jq -e --arg a "$address" 'any(.[]; .address == $a)' >/dev/null 2>&1
+}
+
+window_workspace() {
+  local address="$1"
+  get_clients | jq -r --arg a "$address" '.[] | select(.address == $a) | .workspace.id' 2>/dev/null | head -n1
+}
+
+browser_class_matches() {
+  local class="$1" lower
+  lower="${class,,}"
+  while IFS= read -r needle; do
+    [[ -z "$needle" ]] && continue
+    [[ "$lower" == *"${needle,,}"* ]] && return 0
+  done < <(jq -r '.browser.windowClassIncludes[]? // empty' "$CONFIG")
+  return 1
+}
+
+saved_window() {
+  local key="$1" address
+  address="$(jq -r --arg k "$key" '.[$k] // empty' "$STATE" 2>/dev/null || true)"
+  if [[ -n "$address" ]] && client_exists "$address"; then
+    printf '%s\n' "$address"
+    return 0
+  fi
+  if [[ -n "$address" && "$DRY_RUN" != "1" ]]; then
+    jq --arg k "$key" 'del(.[$k])' "$STATE" > "$STATE.tmp" 2>/dev/null && mv "$STATE.tmp" "$STATE"
+  fi
+  return 1
+}
+
+matching_window() {
+  local key="$1"
+  local saved
+  saved="$(saved_window "$key" || true)"
+  if [[ -n "$saved" ]]; then
+    printf '%s\n' "$saved"
+    return 0
+  fi
+  local patterns=()
+  mapfile -t patterns < <(jq -r --arg k "$key" '.workspaces[] | select(.key == $k) | .match[]? // empty' "$CONFIG")
+  [[ ${#patterns[@]} -eq 0 ]] && return 1
+  while IFS=$'\t' read -r address class title; do
+    browser_class_matches "$class" || continue
+    local lower_title="${title,,}"
+    for pattern in "${patterns[@]}"; do
+      if [[ -n "$pattern" && "$lower_title" == *"${pattern,,}"* ]]; then
+        printf '%s\n' "$address"
+        return 0
+      fi
+    done
+  done < <(get_clients | jq -r '.[] | "\(.address)\t\(.class)\t\(.title)"')
+  return 1
+}
+
+# Addresses belonging to study windows (saved or used this run) are ignored when
+# deciding whether a study workspace is occupied by unrelated windows.
+declare -A STUDY_ADDRS=()
+while IFS= read -r address; do
+  [[ -n "$address" ]] && STUDY_ADDRS["$address"]=1
+done < <(jq -r '.[]' "$STATE" 2>/dev/null | grep -v '^$' || true)
+
+is_study_addr() {
+  [[ -n "${STUDY_ADDRS[$1]:-}" ]]
+}
+
+workspace_occupied() {
+  local target="$1" exclude="${2:-}"
+  [[ "$HYPR_OK" == "1" ]] || return 1
+  local address ws
+  while IFS=$'\t' read -r address ws; do
+    [[ -z "$address" ]] && continue
+    if [[ -n "$exclude" && "$address" == "$exclude" ]]; then continue; fi
+    if is_study_addr "$address"; then continue; fi
+    [[ "$ws" == "$target" ]] && return 0
+  done < <(get_clients | jq -r '.[] | "\(.address)\t\(.workspace.id)"')
+  return 1
+}
+
+RESERVED_WORKSPACES=""
+
+reserve_workspace() {
+  RESERVED_WORKSPACES="${RESERVED_WORKSPACES},$1"
+}
+
+find_free_workspace() {
+  local candidate="$1"
+  local i
+  for ((i = 0; i < 24; i++)); do
+    if [[ ",$RESERVED_WORKSPACES," != *",$candidate,"* ]] && ! workspace_occupied "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    candidate=$((candidate + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
+move_window() {
+  local address="$1" destination="$2"
+  [[ "$HYPR_OK" == "1" ]] || return 0
+  if [[ "$HYPR_LUA" == "1" ]]; then
+    hyprctl eval "return hl.dispatch(hl.dsp.window.move({ workspace = ${destination}, window = \"address:${address}\" }))" >/dev/null 2>&1
+  else
+    hyprctl dispatch movetoworkspacesilent "${destination},address:${address}" >/dev/null 2>&1
+  fi
+  local i
+  for ((i = 0; i < 12; i++)); do
+    if [[ "$(window_workspace "$address")" == "$destination" ]]; then return 0; fi
+    sleep 0.1
+  done
+  log "WARN: window $address did not move to ws $destination"
+  return 1
+}
+
+save_window() {
+  local key="$1" address="$2"
+  jq --arg k "$key" --arg a "$address" '.[$k] = $a' "$STATE" > "$STATE.tmp" 2>/dev/null && mv "$STATE.tmp" "$STATE"
+  STUDY_ADDRS["$address"]=1
+}
+
+launch_window() {
+  local url="$1"
+  [[ -n "$BROWSER_BIN" ]] || return 1
+  [[ -z "$url" ]] && url="about:blank"
+  if command -v setsid >/dev/null 2>&1; then
+    setsid -f "$BROWSER_BIN" "$NEW_WINDOW_FLAG" "$url" >>"$LOG" 2>&1
+  else
+    nohup "$BROWSER_BIN" "$NEW_WINDOW_FLAG" "$url" >>"$LOG" 2>&1 &
+  fi
+}
+
+new_window_address() {
+  # $1 = space-separated addresses that existed before launch.
+  local before="$1"
+  local current addr class
+  current="$(get_clients | jq -r '.[].address' | sort)"
+  while IFS= read -r addr; do
+    [[ -z "$addr" ]] && continue
+    [[ " $before " == *" $addr "* ]] && continue
+    is_study_addr "$addr" && continue
+    class="$(get_clients | jq -r --arg a "$addr" '.[] | select(.address == $a) | .class' | head -n1)"
+    if browser_class_matches "$class"; then
+      printf '%s\n' "$addr"
+      return 0
+    fi
+  done < <(comm -13 <(printf '%s\n' "$before" | tr ' ' '\n' | sort) <(printf '%s\n' "$current" | sort))
+  return 1
+}
+
+health_matches() {
+  local payload actual
+  payload="$(curl -fsS --max-time 1 "$BASE_URL/api/health" 2>/dev/null)" || return 1
+  actual="$(jq -r '.dataDir // empty' <<<"$payload" 2>/dev/null)" || return 1
+  [[ -n "$actual" ]] || return 1
+  [[ "$(realpath -m "$actual")" == "$(realpath -m "$EXPECTED_DATA_DIR")" ]]
+}
+
+ensure_server() {
+  if health_matches; then
+    return 0
+  fi
+  if curl -fsS --max-time 1 "$BASE_URL/api/health" >/dev/null 2>&1; then
+    die "A Study Hub server is running at $BASE_URL but uses a different data directory. Stop it or adjust server.dataDir/port in $CONFIG."
+  fi
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "Server: not running at $BASE_URL (would start it)."
+    return 0
+  fi
+  if [[ "$START_SERVER" != "true" ]]; then
+    die "Study Hub server is not running and server.startIfNeeded is false."
+  fi
+  echo "Starting Study Hub server on $BASE_URL …"
+  local pm="npm"
+  command -v pnpm >/dev/null 2>&1 && pm="pnpm"
+  if [[ ! -d "$ROOT/node_modules" ]]; then
+    (cd "$ROOT" && "$pm" install >>"$LOG" 2>&1) || die "Dependency install failed. See $LOG"
+  fi
+  if [[ ! -f "$ROOT/dist/index.html" ]]; then
+    echo "Building frontend (first run)…"
+    (cd "$ROOT" && "$pm" build >>"$LOG" 2>&1) || die "Frontend build failed. See $LOG"
+  fi
+  local pm_bin
+  if command -v pnpm >/dev/null 2>&1; then pm_bin="$(command -v pnpm)"; else pm_bin="$(command -v npm)"; fi
+  local env_prefix=("STUDY_HUB_HOST=$HOST" "STUDY_HUB_PORT=$PORT")
+  if [[ -n "$DATA_DIR" && "$DATA_DIR" != "null" ]]; then
+    env_prefix+=("STUDY_HUB_DATA_DIR=$DATA_DIR")
+  fi
+  (cd "$ROOT" && env "${env_prefix[@]}" setsid -f "$pm_bin" start >>"$LOG" 2>&1)
+  local i
+  for ((i = 0; i < 100; i++)); do
+    if curl -fsS --max-time 1 "$BASE_URL/api/health" >/dev/null 2>&1; then
+      echo "Server ready."
+      return 0
+    fi
+    sleep 0.25
+  done
+  die "Server did not become healthy at $BASE_URL. See $LOG"
+}
+
+start_session() {
+  [[ "$CREATE_SESSION" == "true" ]] || return 0
+  local response session_id token=""
+  if [[ -f "$TOKEN_FILE" ]]; then token="$(<"$TOKEN_FILE")"; fi
+  if [[ -z "$token" ]]; then token="${STUDY_HUB_API_TOKEN:-}"; fi
+  if [[ -z "$token" ]]; then
+    echo "Warning: could not read the local API token at $TOKEN_FILE." >&2
+    log "WARN: session creation skipped because the API token is missing"
+    return 0
+  fi
+  response="$(curl -fsS -X POST -H "X-Study-Hub-Token: $token" "$BASE_URL/api/sessions/start" 2>/dev/null || true)"
+  if [[ -z "$response" ]]; then
+    echo "Warning: could not create a session record." >&2
+    log "WARN: session creation failed"
+    return 0
+  fi
+  session_id="$(jq -r '.session.id // empty' <<<"$response" 2>/dev/null || true)"
+  if [[ -n "$session_id" ]]; then
+    if [[ "$(jq -r '.created' <<<"$response" 2>/dev/null)" == "true" ]]; then
+      echo "Session #$session_id created (timer not started)."
+    else
+      echo "Using existing session #$session_id (timer state unchanged)."
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Dry run
+# ---------------------------------------------------------------------------
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo "Study Hub launcher dry run"
+  echo "  project:  $ROOT"
+  echo "  config:   $CONFIG"
+  echo "  state:    $STATE"
+  echo "  server:   $BASE_URL"
+  echo "  browser:  ${BROWSER_BIN:-MISSING} (preferred: $BROWSER_CMD)"
+  echo "  strategy: $STRATEGY (overflow start: $OVERFLOW_START)"
+  echo "  session:  $([[ "$CREATE_SESSION" == "true" ]] && echo 'would create/reuse' || echo 'disabled')"
+  if health_matches; then
+    echo "  health:   online"
+  elif curl -fsS --max-time 1 "$BASE_URL/api/health" >/dev/null 2>&1; then
+    echo "  health:   online, but serving a different data directory"
+  else
+    echo "  health:   offline"
+  fi
+  if [[ "$HYPR_OK" == "1" ]]; then
+    echo "  clients:  $(client_count) window(s)"
+    echo "  workspaces:"
+    hyprctl workspaces -j 2>/dev/null | jq -r '.[] | "    ws \(.id) — \(.windows) window(s)"' || true
+  fi
+  index=0
+  FIRST_DEST=""
+  while IFS= read -r app_json; do
+    key="$(jq -r '.key' <<<"$app_json")"
+    label="$(jq -r '.label // .key' <<<"$app_json")"
+    target="$(jq -r '.target' <<<"$app_json")"
+    url="$(jq -r '.url // "about:blank"' <<<"$app_json")"
+    enabled="$(jq -r 'if .enabled == null then true else .enabled end' <<<"$app_json")"
+    url="${url//\{\{BASE_URL\}\}/$BASE_URL}"
+    if [[ "$enabled" != "true" ]]; then
+      echo "  [skip] $label — disabled"
+      index=$((index + 1))
+      continue
+    fi
+    existing="$(matching_window "$key" || true)"
+    destination="$target"
+    if workspace_occupied "$target" "$existing"; then
+      case "$STRATEGY" in
+        overflow) destination="$(find_free_workspace $((OVERFLOW_START + index)))" ;;
+        relocate) destination="$target" ;;
+        use) destination="$target" ;;
+      esac
+    fi
+    reserve_workspace "$destination"
+    [[ -z "$FIRST_DEST" ]] && FIRST_DEST="$destination"
+    if [[ -n "$existing" ]]; then
+      echo "  [reuse] $label → workspace $destination (window $existing)"
+    else
+      echo "  [open]  $label → workspace $destination ($url)"
+    fi
+    index=$((index + 1))
+  done < <(jq -c '.workspaces[]' "$CONFIG")
+  if [[ "$FOCUS_WORKSPACE" == "auto" ]]; then
+    if [[ -n "$FIRST_DEST" ]]; then
+      echo "  focus:    workspace $FIRST_DEST (auto)"
+    else
+      echo "  focus:    none (no enabled workspaces)"
+    fi
+  else
+    echo "  focus:    workspace $FOCUS_WORKSPACE"
+  fi
+  echo "Dry run complete. No windows were launched and no session or timer was started."
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Real launch
+# ---------------------------------------------------------------------------
+log "study launch started"
+ensure_server
+start_session
+
+index=0
+FIRST_DEST=""
+opened=0
+reused=0
+failed=0
+while IFS= read -r app_json; do
+  key="$(jq -r '.key' <<<"$app_json")"
+  label="$(jq -r '.label // .key' <<<"$app_json")"
+  target="$(jq -r '.target' <<<"$app_json")"
+  url="$(jq -r '.url // "about:blank"' <<<"$app_json")"
+  enabled="$(jq -r 'if .enabled == null then true else .enabled end' <<<"$app_json")"
+  url="${url//\{\{BASE_URL\}\}/$BASE_URL}"
+  if [[ "$enabled" != "true" ]]; then
+    index=$((index + 1))
+    continue
+  fi
+
+  existing="$(matching_window "$key" || true)"
+  destination="$target"
+  if workspace_occupied "$target" "$existing"; then
+    case "$STRATEGY" in
+      overflow)
+        if [[ "$OVERFLOW_ENABLED" == "true" ]]; then
+          destination="$(find_free_workspace $((OVERFLOW_START + index)))"
+        fi
+        ;;
+      relocate)
+        while IFS=$'\t' read -r conflict_address conflict_ws; do
+          [[ -z "$conflict_address" || "$conflict_ws" != "$target" ]] && continue
+          [[ "$conflict_address" == "$existing" ]] && continue
+          is_study_addr "$conflict_address" && continue
+          relocate_to="$(find_free_workspace $((OVERFLOW_START + index)))"
+          move_window "$conflict_address" "$relocate_to"
+          log "relocated $conflict_address from ws $target to ws $relocate_to"
+        done < <(get_clients | jq -r '.[] | "\(.address)\t\(.workspace.id)"')
+        destination="$target"
+        ;;
+      use) destination="$target" ;;
+    esac
+  fi
+  reserve_workspace "$destination"
+  [[ -z "$FIRST_DEST" ]] && FIRST_DEST="$destination"
+
+  if [[ -n "$existing" ]]; then
+    current_ws="$(window_workspace "$existing")"
+    if [[ "$current_ws" != "$destination" ]]; then
+      move_window "$existing" "$destination"
+    fi
+    save_window "$key" "$existing"
+    echo "Reused $label on workspace $destination."
+    log "reused $label ($existing) -> ws $destination"
+    reused=$((reused + 1))
+  else
+    if [[ -z "$BROWSER_BIN" ]]; then
+      echo "Could not open $label: no browser available." >&2
+      failed=$((failed + 1))
+      index=$((index + 1))
+      continue
+    fi
+    before="$(get_clients | jq -r '.[].address' | tr '\n' ' ')"
+    launch_window "$url"
+    waited=0
+    new_addr=""
+    while (( waited < WAIT_MS )); do
+      sleep 0.2
+      waited=$((waited + 200))
+      new_addr="$(new_window_address "$before" || true)"
+      [[ -n "$new_addr" ]] && break
+    done
+    if [[ -n "$new_addr" ]]; then
+      move_window "$new_addr" "$destination"
+      save_window "$key" "$new_addr"
+      echo "Opened $label on workspace $destination."
+      log "opened $label ($url) -> window $new_addr -> ws $destination"
+      opened=$((opened + 1))
+    else
+      echo "Warning: $label did not produce a detectable window within ${WAIT_MS}ms." >&2
+      log "WARN: no new window detected for $label ($url)"
+      failed=$((failed + 1))
+    fi
+  fi
+
+  sleep "$(awk "BEGIN { printf \"%.2f\", $LAUNCH_DELAY_MS / 1000 }")"
+  index=$((index + 1))
+done < <(jq -c '.workspaces[]' "$CONFIG")
+
+FOCUS_TARGET="$FOCUS_WORKSPACE"
+if [[ "$FOCUS_WORKSPACE" == "auto" ]]; then FOCUS_TARGET="$FIRST_DEST"; fi
+if [[ -n "$FOCUS_TARGET" && "$HYPR_OK" == "1" ]]; then
+  if [[ "$HYPR_LUA" == "1" ]]; then
+    hyprctl eval "return hl.dispatch(hl.dsp.focus({ workspace = ${FOCUS_TARGET} }))" >/dev/null 2>&1 || true
+  else
+    hyprctl dispatch workspace "$FOCUS_TARGET" >/dev/null 2>&1 || true
+  fi
+fi
+
+summary="Study environment ready: $opened opened, $reused reused, $failed failed."
+echo "$summary"
+log "$summary"
+notify "Study Hub" "$summary"

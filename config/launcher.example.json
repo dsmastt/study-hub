@@ -1,0 +1,57 @@
+{
+  "browser": {
+    "command": "zen-browser",
+    "fallback": ["firefox"],
+    "windowClassIncludes": ["zen", "firefox"],
+    "newWindowFlag": "--new-window"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 1737,
+    "dataDir": null,
+    "startIfNeeded": true
+  },
+  "workspaces": [
+    {
+      "key": "lecture",
+      "label": "Lecture Station",
+      "target": 1,
+      "url": "about:blank",
+      "match": ["Lecture Station"],
+      "enabled": true
+    },
+    {
+      "key": "chatgpt",
+      "label": "ChatGPT",
+      "target": 2,
+      "url": "https://chatgpt.com",
+      "match": ["ChatGPT"],
+      "enabled": true
+    },
+    {
+      "key": "dashboard",
+      "label": "Study Hub",
+      "target": 3,
+      "url": "{{BASE_URL}}",
+      "match": ["Study Hub", "127.0.0.1:1737"],
+      "enabled": true
+    },
+    {
+      "key": "notebooklm",
+      "label": "NotebookLM",
+      "target": 4,
+      "url": "https://notebooklm.google.com",
+      "match": ["NotebookLM"],
+      "enabled": true
+    }
+  ],
+  "occupiedStrategy": "overflow",
+  "overflow": {
+    "enabled": true,
+    "start": 5
+  },
+  "focusWorkspace": "auto",
+  "windowWaitMs": 9000,
+  "launchDelayMs": 350,
+  "createSession": true
+}
