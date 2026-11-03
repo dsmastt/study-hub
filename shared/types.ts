@@ -294,6 +294,7 @@ export interface AISettings {
   apiKeyHint: string | null;
   providerLabel: string;
   extractionModel: string;
+  visionModel: string;
   updatedAt: string | null;
 }
 
@@ -367,11 +368,20 @@ export interface ExtractedQuestion {
   flags: string[];
 }
 
+export interface WorksheetDuplicate {
+  uploadId: number;
+  sourceName: string | null;
+  fileName: string | null;
+  uploadedAt: string;
+  questionCount: number;
+}
+
 export interface ExtractionResult {
   questions: ExtractedQuestion[];
   warnings: string[];
   sourceName: string | null;
   storedQuestionIds: number[];
+  duplicate?: WorksheetDuplicate | null;
 }
 
 export interface AIStatus {

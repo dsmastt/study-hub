@@ -27,6 +27,7 @@ const settingsSchema = z
         baseUrl: z.string().url().max(500).optional(),
         model: z.string().trim().min(1).max(200).optional(),
         extractionModel: z.string().trim().min(1).max(200).optional(),
+        visionModel: z.string().trim().max(200).optional(),
         apiKey: z.string().trim().max(500).optional(),
         clearApiKey: z.boolean().optional(),
       })
@@ -46,6 +47,7 @@ settingsRouter.patch("/", (req, res) => {
     if (input.ai.baseUrl !== undefined) setSetting("aiBaseUrl", input.ai.baseUrl);
     if (input.ai.model !== undefined) setSetting("aiModel", input.ai.model);
     if (input.ai.extractionModel !== undefined) setSetting("aiExtractionModel", input.ai.extractionModel);
+    if (input.ai.visionModel !== undefined) setSetting("aiVisionModel", input.ai.visionModel);
     if (input.ai.clearApiKey) setSetting("aiApiKey", "");
     else if (input.ai.apiKey) setSetting("aiApiKey", input.ai.apiKey);
     setSetting("aiUpdatedAt", new Date().toISOString());

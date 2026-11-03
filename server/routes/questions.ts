@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getDb, nowIso, rowToQuestion } from "../db.ts";
-import { getRecentAttempts } from "../services/masteryService.ts";
+import { backupDatabase, getDb, nowIso, rowToQuestion } from "../db.ts";
+import { getRecentAttempts, invalidateMasteryCache } from "../services/masteryService.ts";
 import { HttpError, parseId } from "../http.ts";
+import { clearWorksheetUploads } from "../services/worksheetUploads.ts";
 
 export const questionsRouter = Router();
 
@@ -83,6 +84,90 @@ questionsRouter.get("/", (req, res) => {
       .get(...params) as { count: number }
   ).count;
   res.json({ questions: rows.map(rowToQuestion), total });
+});
+
+const nextQuerySchema = z.object({
+  subjectId: z.coerce.number().int().positive().optional(),
+  chapterId: z.coerce.number().int().positive().optional(),
+  subtopicId: z.coerce.number().int().positive().optional(),
+  difficulty: z.enum(["easy", "medium", "hard"]).optional(),
+  currentId: z.coerce.number().int().positive().optional(),
+  excludeIds: z.string().max(5000).optional(),
+});
+
+questionsRouter.get("/next", (req, res) => {
+  const query = nextQuerySchema.parse(req.query);
+  const conditions = ["q.status = 'approved'", "q.subtopic_id IS NOT NULL"];
+  const params: (string | number)[] = [];
+  if (query.subjectId) {
+    conditions.push("q.subject_id = ?");
+    params.push(query.subjectId);
+  }
+  if (query.chapterId) {
+    conditions.push("q.chapter_id = ?");
+    params.push(query.chapterId);
+  }
+  if (query.subtopicId) {
+    conditions.push("q.subtopic_id = ?");
+    params.push(query.subtopicId);
+  }
+  if (query.difficulty) {
+    conditions.push("q.difficulty = ?");
+    params.push(query.difficulty);
+  }
+  if (query.currentId) {
+    conditions.push("q.id != ?");
+    params.push(query.currentId);
+  }
+  const excludeIds = (query.excludeIds ?? "")
+    .split(",")
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .slice(0, 500);
+  if (excludeIds.length > 0) {
+    conditions.push(`q.id NOT IN (${excludeIds.map(() => "?").join(",")})`);
+    params.push(...excludeIds);
+  }
+  const where = conditions.join(" AND ");
+  const countRow = getDb()
+    .prepare(`SELECT COUNT(*) AS count FROM questions q WHERE ${where}`)
+    .get(...params) as { count: number };
+  const row = getDb()
+    .prepare(
+      `SELECT q.*, s.name AS subject_name, c.name AS chapter_name, st.name AS subtopic_name,
+         (SELECT COUNT(*) FROM attempts a WHERE a.question_id = q.id) AS attempt_count,
+         (SELECT a.created_at FROM attempts a WHERE a.question_id = q.id ORDER BY a.created_at DESC LIMIT 1) AS last_attempt_at,
+         (SELECT a.correctness FROM attempts a WHERE a.question_id = q.id ORDER BY a.created_at DESC LIMIT 1) AS last_correctness
+       FROM questions q
+       LEFT JOIN subjects s ON s.id = q.subject_id
+       LEFT JOIN chapters c ON c.id = q.chapter_id
+       LEFT JOIN subtopics st ON st.id = q.subtopic_id
+       WHERE ${where}
+       ORDER BY
+         (SELECT COUNT(*) FROM attempts a WHERE a.question_id = q.id) ASC,
+         (SELECT MAX(a.created_at) FROM attempts a WHERE a.question_id = q.id) IS NOT NULL ASC,
+         RANDOM()
+       LIMIT 1`,
+    )
+    .get(...params) as Record<string, unknown> | undefined;
+  const total = Number(countRow.count);
+  res.json({
+    question: row ? rowToQuestion(row) : null,
+    remaining: Math.max(0, total - (row ? 1 : 0)),
+    total,
+  });
+});
+
+questionsRouter.post("/reset", (req, res) => {
+  z.object({ confirm: z.literal("RESET") }).parse(req.body ?? {});
+  const backupPath = backupDatabase("pre-question-reset");
+  const result = getDb()
+    .prepare("DELETE FROM questions WHERE source_type IN ('uploaded', 'generated')")
+    .run();
+  getDb().prepare("DELETE FROM progress_snapshots").run();
+  clearWorksheetUploads();
+  invalidateMasteryCache();
+  res.json({ deleted: Number(result.changes), backupPath });
 });
 
 questionsRouter.get("/:id", (req, res) => {

@@ -12,9 +12,10 @@ import {
   Save,
   ShieldCheck,
   Terminal,
+  Trash2,
 } from "lucide-react";
 import { api } from "../api/client.ts";
-import { useLauncher, useSettings, useSystemInfo } from "../api/hooks.ts";
+import { useInvalidateAll, useLauncher, useSettings, useSystemInfo } from "../api/hooks.ts";
 import { PageHeader } from "../components/Layout.tsx";
 import { useTheme } from "../theme/ThemeProvider.tsx";
 import {
@@ -42,10 +43,13 @@ export default function SettingsPage() {
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [extractionModel, setExtractionModel] = useState("");
+  const [visionModel, setVisionModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [backupPath, setBackupPath] = useState<string | null>(null);
+  const [resetResult, setResetResult] = useState<{ deleted: number; backupPath: string } | null>(null);
+  const invalidateAll = useInvalidateAll();
   const baseUrlId = useFieldId("ai-base-url");
 
   useEffect(() => {
@@ -56,6 +60,7 @@ export default function SettingsPage() {
     setBaseUrl(settings.ai.baseUrl);
     setModel(settings.ai.model);
     setExtractionModel(settings.ai.extractionModel);
+    setVisionModel(settings.ai.visionModel);
   }, [settings]);
 
   const save = useMutation({
@@ -68,6 +73,7 @@ export default function SettingsPage() {
           baseUrl,
           model,
           extractionModel,
+          visionModel,
           ...(clearKey ? { clearApiKey: true } : apiKey ? { apiKey } : {}),
         },
       }),
@@ -97,6 +103,13 @@ export default function SettingsPage() {
   const backup = useMutation({
     mutationFn: api.backup,
     onSuccess: (result) => setBackupPath(result.path),
+  });
+  const resetQuestionBank = useMutation({
+    mutationFn: api.resetQuestions,
+    onSuccess: async (result) => {
+      setResetResult(result);
+      await invalidateAll();
+    },
   });
 
   if (isLoading) return <LoadingPanel label="Loading settings…" />;
@@ -171,11 +184,22 @@ export default function SettingsPage() {
               <Field label="Chat model">
                 <input className="input" value={model} onChange={(event) => setModel(event.target.value)} />
               </Field>
-              <Field label="Extraction / generation model" hint="May be the same model for now.">
+              <Field label="Extraction / generation model" hint="Used for text generation and fallback extraction.">
                 <input
                   className="input"
                   value={extractionModel}
                   onChange={(event) => setExtractionModel(event.target.value)}
+                />
+              </Field>
+              <Field
+                label="Vision model (images / PDF pages)"
+                hint="Multimodal model used to read worksheets directly from page images. Defaults to the extraction model when blank."
+              >
+                <input
+                  className="input"
+                  value={visionModel}
+                  onChange={(event) => setVisionModel(event.target.value)}
+                  placeholder={settings.ai.extractionModel}
                 />
               </Field>
               <Field
@@ -291,6 +315,53 @@ export default function SettingsPage() {
               Backups are created with SQLite's VACUUM INTO so they are consistent while the app is
               running. A pre-migration snapshot is also attempted automatically.
             </div>
+          </Panel>
+
+          <Panel>
+            <PanelHead
+              eyebrow="DANGER ZONE"
+              title="Reset extracted question bank"
+              subtitle="Start fresh with a new worksheet when the existing extracted bank is noisy or outdated."
+            />
+            <p className="small muted">
+              Deletes every AI-extracted and AI-generated question, their attempts, mastery
+              snapshots, and upload duplicate history. Manual questions, tasks, sessions and settings
+              remain. A database backup is created first.
+            </p>
+            <Button
+              variant="danger"
+              size="sm"
+              className="mt-12"
+              icon={<Trash2 size={13} />}
+              loading={resetQuestionBank.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Reset the extracted question bank? This deletes AI-extracted/generated questions, their attempts, mastery snapshots, and upload duplicate history. Manual questions, tasks and sessions stay. A backup will be created first.",
+                  )
+                ) {
+                  resetQuestionBank.mutate();
+                }
+              }}
+            >
+              Reset question bank
+            </Button>
+            {resetResult && (
+              <div className="mt-12">
+                <InlineNotice tone="success" title={`Deleted ${resetResult.deleted} question(s)`}>
+                  Backup: <span className="mono tiny">{resetResult.backupPath}</span>
+                </InlineNotice>
+              </div>
+            )}
+            {resetQuestionBank.error && (
+              <div className="mt-12">
+                <InlineNotice tone="danger" title="Reset failed">
+                  {resetQuestionBank.error instanceof Error
+                    ? resetQuestionBank.error.message
+                    : String(resetQuestionBank.error)}
+                </InlineNotice>
+              </div>
+            )}
           </Panel>
 
           <Panel>

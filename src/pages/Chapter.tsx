@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   BookOpen,
   Pencil,
+  Play,
   Plus,
   Target,
   Trash2,
@@ -296,6 +297,11 @@ export default function ChapterPage() {
         description={chapter.description || "No chapter description recorded yet."}
         actions={
           <>
+            <Link to={`/practice?chapterId=${chapter.id}`}>
+              <Button variant="outline" icon={<Play size={13} />}>
+                Focus chapter
+              </Button>
+            </Link>
             <Button
               variant="subtle"
               icon={<Pencil size={13} />}

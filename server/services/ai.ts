@@ -6,9 +6,13 @@ export interface AIToolCall {
   function: { name: string; arguments: string };
 }
 
+export type AIContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
+
 export interface AIMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | AIContentPart[] | null;
   tool_calls?: AIToolCall[];
   tool_call_id?: string;
   name?: string;

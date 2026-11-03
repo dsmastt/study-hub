@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,6 +10,7 @@ import {
   FileQuestion,
   FileUp,
   Pencil,
+  Play,
   Plus,
   RotateCcw,
   Search,
@@ -105,6 +106,9 @@ function QuestionCard({
         <Button variant="primary" size="sm" onClick={onAttempt}>
           Attempt
         </Button>
+        <Link to={`/practice?questionId=${question.id}`} className="btn btn-subtle btn-sm">
+          <Play size={12} /> Focus
+        </Link>
         <Button variant="subtle" size="sm" icon={<Pencil size={12} />} onClick={onEdit}>
           Edit
         </Button>
@@ -222,11 +226,12 @@ export default function Questions() {
     onSuccess: invalidate,
   });
   const extractMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (options?: { force?: boolean }) =>
       api.extract({
         file: uploadFile ?? undefined,
         text: uploadText || undefined,
         sourceName: uploadSource || undefined,
+        force: options?.force,
       }),
     onSuccess: invalidate,
   });
@@ -244,6 +249,15 @@ export default function Questions() {
       }),
     onSuccess: invalidate,
   });
+
+  useEffect(() => {
+    if (tab !== "generate") return;
+    if (!genSubject && subjectId) setGenSubject(String(subjectId));
+    if (!genChapter && chapterId) setGenChapter(String(chapterId));
+    if (!genSubtopic && subtopicId) setGenSubtopic(String(subtopicId));
+    // Initialise the generator from Focus mode / topic links without overriding edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, subjectId, chapterId, subtopicId]);
 
   const genChapters = (syllabus?.chapters ?? []).filter(
     (chapter) => !genSubject || chapter.subjectId === Number(genSubject),
@@ -290,6 +304,13 @@ export default function Questions() {
   };
 
   const totalQuestions = practiceQuery.data?.total ?? 0;
+  const focusParams = new URLSearchParams();
+  if (subjectId) focusParams.set("subjectId", String(subjectId));
+  if (chapterId) focusParams.set("chapterId", String(chapterId));
+  if (subtopicId) focusParams.set("subtopicId", String(subtopicId));
+  if (difficulty) focusParams.set("difficulty", difficulty);
+  if (questionId) focusParams.set("questionId", String(questionId));
+  const focusHref = `/practice${focusParams.toString() ? `?${focusParams.toString()}` : ""}`;
 
   return (
     <>
@@ -299,6 +320,11 @@ export default function Questions() {
         description="Practice from approved questions, review AI-extracted worksheets before they become trusted data, generate targeted practice, and revisit recorded mistakes."
         actions={
           <>
+            <Link to={focusHref}>
+              <Button variant="outline" icon={<Play size={14} />}>
+                Focus mode
+              </Button>
+            </Link>
             <Button
               variant="subtle"
               icon={<Plus size={14} />}
@@ -510,11 +536,11 @@ export default function Questions() {
             <div className="between wrap">
               <div>
                 <div className="eyebrow">TRUST BOUNDARY</div>
-                <h2 className="mt-4">Worksheet extraction stays untrusted until you approve it.</h2>
+                <h2 className="mt-4">Clean extractions are approved automatically.</h2>
                 <p className="small muted mt-4" style={{ maxWidth: 820 }}>
-                  AI-extracted questions are stored with flags for unclear text, missing diagrams,
-                  ambiguous answers, or unreliable keys. Review the classification, answer and marking
-                  scheme before approving. Nothing in this queue counts as practice material yet.
+                  Questions that come back without flags and with an answer key go straight to the
+                  approved bank. Anything flagged for unclear content, missing diagrams, ambiguous
+                  answers, unreliable keys or uncertain classification waits here for your review.
                 </p>
               </div>
               <Badge tone={reviewQuery.data?.total ? "warn" : "muted"}>
@@ -623,9 +649,9 @@ export default function Questions() {
           )}
           <Panel>
             <PanelHead
-              eyebrow="WORKSHEET INGESTION"
+              eyebrow="WORKSHEET INGESTION / AI VISION"
               title="Upload a worksheet or paste text"
-              subtitle="PDF text, TXT, Markdown, CSV and TeX are supported. Scanned image PDFs need OCR outside the app; image files are rejected rather than guessed at."
+              subtitle="PDFs (including scans), photos and screenshots are rendered and read directly by the vision model, so roots and mathematical symbols are taken from the page image rather than broken text extraction. Text files and pasted text use the standard parser."
             />
             <div className="grid" style={{ gap: 14 }}>
               <label
@@ -639,24 +665,37 @@ export default function Questions() {
                   event.preventDefault();
                   setDragging(false);
                   const file = event.dataTransfer.files?.[0];
-                  if (file) setUploadFile(file);
+                  if (file) {
+                    extractMutation.reset();
+                    setUploadFile(file);
+                  }
                 }}
               >
                 <input
                   type="file"
-                  accept=".pdf,.txt,.md,.markdown,.csv,.tex"
-                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                  accept=".pdf,.txt,.md,.markdown,.csv,.tex,.png,.jpg,.jpeg,.jfif,.webp,.gif,.bmp,.tif,.tiff,.avif,.heic,.heif,.svg"
+                  onChange={(event) => {
+                    extractMutation.reset();
+                    setUploadFile(event.target.files?.[0] ?? null);
+                  }}
                 />
                 <UploadCloud size={26} />
                 <strong>{uploadFile ? uploadFile.name : "Drop a worksheet file here"}</strong>
-                <span>or click to choose a file · max 20 MB</span>
+                <span>or click to choose a file · PDF, image or text · max 50 MB · screenshots can be pasted below</span>
               </label>
               {uploadFile && (
                 <div className="between">
                   <span className="mono tiny faint">
                     {uploadFile.name} · {(uploadFile.size / 1024).toFixed(1)} KB
                   </span>
-                  <Button variant="ghost" size="sm" onClick={() => setUploadFile(null)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      extractMutation.reset();
+                      setUploadFile(null);
+                    }}
+                  >
                     Remove file
                   </Button>
                 </div>
@@ -679,23 +718,42 @@ export default function Questions() {
                   <textarea
                     className="textarea"
                     value={uploadText}
-                    onChange={(event) => setUploadText(event.target.value)}
+                    onChange={(event) => {
+                      extractMutation.reset();
+                      setUploadText(event.target.value);
+                    }}
+                    onPaste={(event) => {
+                      const fromFiles = Array.from(event.clipboardData.files).find((item) =>
+                        item.type.startsWith("image/"),
+                      );
+                      const fromItems = Array.from(event.clipboardData.items)
+                        .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                        .map((item) => item.getAsFile())
+                        .find((file): file is File => Boolean(file));
+                      const image = fromFiles ?? fromItems;
+                      if (image) {
+                        event.preventDefault();
+                        extractMutation.reset();
+                        setUploadFile(image);
+                      }
+                    }}
                     rows={7}
-                    placeholder="Paste the worksheet text here…"
+                    placeholder="Paste worksheet text, or paste a screenshot here…"
                   />
                 </Field>
               </div>
               <div className="between">
                 <span className="tiny faint">
-                  Extracted questions are stored as “needs review”. Answer keys are only trusted after
-                  you review them.
+                  Page images are sent to the configured vision model. Clean extractions with no flags
+                  and an answer key are auto-approved; flagged questions stay in Review. Large PDFs are
+                  processed in page batches (first 40 pages per upload), with warnings for split answer keys.
                 </span>
                 <Button
                   variant="primary"
                   icon={<FileUp size={14} />}
                   loading={extractMutation.isPending}
                   disabled={!aiStatus?.configured || (!uploadFile && !uploadText.trim())}
-                  onClick={() => extractMutation.mutate()}
+                  onClick={() => extractMutation.mutate({})}
                 >
                   Extract questions
                 </Button>
@@ -717,12 +775,47 @@ export default function Questions() {
             )}
           </Panel>
 
-          {extractMutation.data && (
+          {extractMutation.data?.duplicate && (
+            <Panel>
+              <InlineNotice
+                tone="warn"
+                title="This worksheet was already uploaded"
+                action={
+                  <div className="row gap-6 wrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={extractMutation.isPending}
+                      onClick={() => extractMutation.mutate({ force: true })}
+                    >
+                      Upload anyway
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => extractMutation.reset()}>
+                      Cancel
+                    </Button>
+                  </div>
+                }
+              >
+                It matches{" "}
+                <strong>
+                  {extractMutation.data.duplicate.sourceName ??
+                    extractMutation.data.duplicate.fileName ??
+                    "an earlier upload"}
+                </strong>{" "}
+                from {fmtDateTime(extractMutation.data.duplicate.uploadedAt)} with{" "}
+                {extractMutation.data.duplicate.questionCount} extracted question
+                {extractMutation.data.duplicate.questionCount === 1 ? "" : "s"}. Uploading again will
+                create duplicate questions unless you review or reset the existing bank first.
+              </InlineNotice>
+            </Panel>
+          )}
+
+          {extractMutation.data && !extractMutation.data.duplicate && (
             <Panel>
               <PanelHead
                 eyebrow="EXTRACTION RESULT"
                 title={`${extractMutation.data.questions.length} question(s) extracted`}
-                subtitle={`${extractMutation.data.storedQuestionIds.length} stored for review.`}
+                subtitle={`${extractMutation.data.storedQuestionIds.length} stored. Clean extractions were auto-approved; flagged items are waiting in Review.`}
                 actions={
                   <Button variant="primary" size="sm" onClick={() => setTab("review")}>
                     Open review queue

@@ -11,7 +11,8 @@ The app tracks Physics, Chemistry and Mathematics by **subject → chapter → s
 - **Command center dashboard** — active session, evidence-based briefing, today's plan, deadlines, weak topics, mastery coverage, weekly focus/attempt charts, recent attempts, recent sessions.
 - **JEE syllabus** — 71 chapters and 363 subtopics seeded for Physics, Chemistry and Mathematics, with a dedicated page per chapter.
 - **Deterministic mastery** — calculated from recorded attempts with correctness, difficulty, recency, hints/solutions, repetition damping and evidence thresholds. No LLM-invented percentages.
-- **Question system** — manual questions, AI-generated sets, worksheet upload + AI extraction, review queue for untrusted extracted content, attempt recording, mistake types, confidence, hints and solution views.
+- **Question system** — manual questions, AI-generated sets, worksheet upload with **AI vision extraction** (images, scanned PDFs and text PDFs), automatic approval of clean extractions, duplicate-upload detection, a review queue for flagged content, and attempt recording.
+- **Focus practice** — a distraction-free mode that serves one approved question at a time and, after recording an attempt, loads the next unseen approved question from the same subtopic.
 - **Planner** — tasks, assignments, projects, tests, exams and revision; week strip and month calendar; deadline/priority/weakness-based urgency ordering.
 - **Sessions and timers** — session records, explicit focus/break start, pause, resume, end, configurable targets, notes and evidence-based summaries. No lockouts or quiz gates.
 - **AI assistant** — DeepSeek-compatible chat with explicit tools, server-side validation, approval for consequential actions, no shell access, and a deliberately restrained personality.
@@ -26,6 +27,8 @@ The app tracks Physics, Chemistry and Mathematics by **subject → chapter → s
 - Node.js **22.5+** (uses built-in `node:sqlite`; tested on Node 26)
 - `pnpm` (preferred) or `npm`
 - For the launcher: Hyprland, `hyprctl`, `jq`, `curl`, `notify-send` (optional), `zen-browser` or Firefox
+- Poppler (`pdfinfo`, `pdftoppm`) for rendering PDF pages for AI vision
+- ImageMagick (`magick`/`convert`) recommended for normalizing phone photos, HEIC/SVG and other image formats
 - Caelestia Shell for live theme colours (optional; fallback palette is used otherwise)
 
 ---
@@ -65,6 +68,7 @@ Default provider is DeepSeek's OpenAI-compatible API:
 - Base URL: `https://api.deepseek.com`
 - Model: `deepseek-chat`
 - Extraction/generation model: `deepseek-chat`
+- Vision model: defaults to the extraction model when blank. Use a multimodal model for image/scanned-PDF extraction.
 
 Configure the provider and API key in **Settings**, or via environment variables:
 
@@ -74,11 +78,31 @@ export DEEPSEEK_API_KEY=sk-...
 export STUDY_HUB_AI_BASE_URL=https://api.deepseek.com
 export STUDY_HUB_AI_MODEL=deepseek-chat
 export STUDY_HUB_AI_API_KEY=sk-...
+export STUDY_HUB_AI_VISION_MODEL=deepseek-chat
 ```
 
 Environment values override values stored in the local database. Any OpenAI-compatible chat-completions endpoint can be used; the application is not tied to DeepSeek.
 
+### AI assistant
+
 The AI can read app data through tools (`get_study_overview`, `get_weak_topics`, `get_tasks`, `get_chapter_detail`, etc.), start/pause/resume timers, and propose task or question changes. Writes that change data require approval in the chat UI. It has no shell, filesystem or arbitrary network access.
+
+Worksheet uploads do not rely on text-layer OCR. PDFs are rendered page-by-page with Poppler, images are oriented/resized with ImageMagick where available, and the resulting page images are sent to the configured vision model. The model transcribes symbols, roots, exponents and fractions directly from the image, then classifies and stores questions in the approved bank or Review depending on flags. Large PDFs are processed in page batches (up to 40 pages per upload); batch/answer-key caveats are returned as warnings.
+
+### Worksheet auto-approval, duplicates and reset
+
+- An extracted or generated question with **no flags and a non-empty answer key is auto-approved**. Questions with unclear content, missing diagrams, uncertain classification, unreliable keys or other flags stay in the Review queue.
+- Uploads are fingerprinted with SHA-256 and remembered in `worksheet_uploads`. Re-uploading the same file content (or a file with the same name) produces a warning with an **Upload anyway** override instead of silently creating duplicate questions.
+- **Settings → Danger Zone → Reset extracted question bank** creates a safety backup, then deletes uploaded/generated questions, their attempts, mastery snapshots, and upload duplicate history. Manual questions, tasks, sessions and settings are kept. Use this before a fresh worksheet import when the existing bank is noisy.
+
+## Focus practice
+
+Open **Focus mode** from the Questions page (or **Focus** on an individual question, **Focus chapter** on a chapter page, or the dashboard quick action). The full-screen mode:
+
+- shows one approved, subtopic-classified question at a time;
+- records the answer, self-evaluation, elapsed time and solution-view penalty with minimal fields;
+- after **Next question**, selects another unseen approved question from the **same subtopic**, preferring questions with fewer prior attempts;
+- reports when the topic has no more unseen approved questions, with links to generate or go back.
 
 ---
 
@@ -132,7 +156,7 @@ STUDY_HUB_DATA_DIR=/mnt/Vault/study-hub-data pnpm start
 
 The schema is versioned in the `meta` table. Before a schema migration the app creates a consistent backup and aborts startup if that backup fails. Manual backups are available in **Settings → Data / Recovery**. Existing data/backup files are re-secured to owner-only permissions at startup.
 
-Tables include: `subjects`, `chapters`, `subtopics`, `questions`, `attempts`, `tasks`, `sessions`, `progress_snapshots`, `chat_messages`, `pending_actions`, `settings`, `meta`.
+Tables include: `subjects`, `chapters`, `subtopics`, `questions`, `attempts`, `tasks`, `sessions`, `progress_snapshots`, `worksheet_uploads`, `chat_messages`, `pending_actions`, `settings`, `meta`.
 
 The app never creates invented attempts, sessions or mastery values. Empty views remain empty until you record real activity.
 
@@ -196,7 +220,9 @@ server/
                         sessions, settings, theme, AI
   services/
     masteryService.ts   evidence aggregation and snapshots
-    questionAI.ts       generation + worksheet extraction
+    questionAI.ts       generation + textual extraction
+    worksheetExtraction.ts  PDF/image rendering + AI vision extraction
+    worksheetUploads.ts     duplicate-upload fingerprints/history
     assistant.ts        tool definitions, confirmation flow, chat storage
     ai.ts               OpenAI-compatible client
     sessions.ts         timers and summaries
@@ -207,8 +233,8 @@ src/                    React + TypeScript frontend
   theme/                Caelestia CSS-variable provider + SSE
   api/                  typed client and React Query hooks
   components/           layout, charts, timer, attempt/editor modals, UI kit
-  pages/                dashboard, syllabus, chapter, questions, planner,
-                        sessions, assistant, settings
+  pages/                dashboard, syllabus, chapter, questions, practice,
+                        planner, sessions, assistant, settings
   styles.css            command-center design system
 scripts/
   study                 Hyprland launcher
@@ -229,7 +255,7 @@ pnpm test        # mastery engine (12 tests)
 pnpm build       # production frontend
 ```
 
-Manual smoke tests used during development covered: session start → focus timer, task creation, manual question creation, attempt recording, mastery evidence, planning, ending a session, session summaries, and assistant tool approval against a mock OpenAI-compatible server.
+Manual smoke tests used during development covered: session start → focus timer, task creation, manual question creation, attempt recording, mastery evidence, planning, ending a session, session summaries, assistant tool approval against a mock OpenAI-compatible server, AI vision extraction from a worksheet image plus a scanned image-only PDF (roots and superscripts preserved), same-topic focus-mode sequencing, duplicate-upload warnings, auto-approval/review behaviour, and the question-bank reset (with backup).
 
 The `study` launcher supports `--dry-run`; it was verified against a live Hyprland session with all four target workspaces occupied, correctly overflowing to 5–8.
 
@@ -237,7 +263,10 @@ The `study` launcher supports `--dry-run`; it was verified against a live Hyprla
 
 ## Known limitations / intentional choices
 
-- Scanned image PDFs are **not OCRed**; text-based PDF/TXT/Markdown/CSV/TeX are supported and image files are rejected rather than guessed. Scanned worksheets need OCR converted to text first.
+- PDF/image worksheets use AI vision rather than OCR. ImageMagick and Poppler are needed for the least-friction path; if vision fails, text PDFs fall back to embedded text with a warning, and scanned PDFs without a vision model cannot be extracted. Only the first 40 pages of a large PDF are sent per upload, and multi-batch answer keys may need review.
+- Supported uploads: PDF, PNG/JPEG/WebP/GIF/BMP/TIFF/AVIF/HEIC/SVG images, TXT, Markdown, CSV and TeX.
+- Duplicate detection matches identical file content and file names. It cannot identify a re-encoded scan of the same paper; review the bank or reset before a deliberate re-import.
+- Focus mode requires approved questions with a subtopic classification; unclassified or flagged questions are excluded.
 - The focus/break timers are stopwatch-style with configurable **targets** shown in the UI; they do not auto-end or lock you out. Ending is always explicit.
 - Session focus minutes are attributed to the session start date. The dashboard labels this limitation.
 - One seeded syllabus is active (JEE). The data model is subject/chapter/subtopic based, so alternate syllabi can be introduced later without migrating attempts.

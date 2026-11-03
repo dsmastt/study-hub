@@ -118,6 +118,8 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`Study Hub listening on http://${HOST}:${PORT}`);
   console.log(`Data directory: ${DATA_DIR}`);
 });
+// Vision extraction of large worksheets can take several minutes.
+server.requestTimeout = 10 * 60 * 1000;
 
 function shutdown(signal: string) {
   console.log(`Received ${signal}; shutting down.`);

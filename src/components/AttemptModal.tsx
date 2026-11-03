@@ -6,6 +6,7 @@ import { MISTAKE_TYPES } from "../../shared/types.ts";
 import { api } from "../api/client.ts";
 import { useQuestion } from "../api/hooks.ts";
 import { fmtClock } from "../lib/format.ts";
+import { difficultyTone, optionLetter, suggestedResult } from "../lib/attempt.ts";
 import {
   Badge,
   Button,
@@ -17,38 +18,6 @@ import {
   ScoreBadge,
   Spinner,
 } from "./ui.tsx";
-
-function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ").replace(/[.\s]+$/, "");
-}
-
-function optionLetter(index: number): string {
-  return String.fromCharCode(65 + index);
-}
-
-function suggestedResult(question: Question, selected: string): Correctness | null {
-  if (!selected || !question.answer.trim()) return null;
-  if (question.questionType === "mcq") {
-    const keyLetter = question.answer.trim().match(/^\(?([a-d])\)?$/i)?.[1]?.toUpperCase();
-    if (keyLetter) {
-      return selected.toUpperCase() === keyLetter ? "correct" : "incorrect";
-    }
-    const normalizedKey = normalize(question.answer);
-    const options = question.options ?? [];
-    const keyIndex = options.findIndex(
-      (option) => normalize(option) === normalizedKey || normalize(option).replace(/^[a-d][).]\s*/, "") === normalizedKey,
-    );
-    if (keyIndex >= 0) {
-      return selected.toUpperCase() === optionLetter(keyIndex) ? "correct" : "incorrect";
-    }
-    return null;
-  }
-  return normalize(selected) === normalize(question.answer) ? "correct" : null;
-}
-
-function difficultyTone(difficulty: Difficulty): "success" | "warn" | "danger" {
-  return difficulty === "easy" ? "success" : difficulty === "medium" ? "warn" : "danger";
-}
 
 export function AttemptModal({
   questionId,

@@ -54,7 +54,7 @@ export function errorHandler(
     res.status(400).json({
       error:
         (error as Error & { code?: string }).code === "LIMIT_FILE_SIZE"
-          ? "File is too large. The limit is 20 MB."
+          ? "File is too large. The limit is 50 MB."
           : `Upload error: ${error.message}`,
     });
     return;

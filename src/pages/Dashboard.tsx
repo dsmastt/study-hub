@@ -469,6 +469,9 @@ export default function Dashboard() {
               <NavLink to="/planner" className="quick-action">
                 <CalendarClock size={15} /> Update plan
               </NavLink>
+              <NavLink to="/practice" className="quick-action">
+                <Play size={15} /> Focus practice
+              </NavLink>
             </div>
           </Panel>
         </div>

@@ -9,10 +9,20 @@ import Sessions from "./pages/Sessions.tsx";
 import Assistant from "./pages/Assistant.tsx";
 import SettingsPage from "./pages/Settings.tsx";
 import NotFound from "./pages/NotFound.tsx";
+import Practice from "./pages/Practice.tsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 
 export default function App() {
   return (
     <Routes>
+      <Route
+        path="practice"
+        element={
+          <ErrorBoundary>
+            <Practice />
+          </ErrorBoundary>
+        }
+      />
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="syllabus" element={<Syllabus />} />

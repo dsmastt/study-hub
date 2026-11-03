@@ -1,11 +1,18 @@
+import crypto from "node:crypto";
 import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { extractText } from "unpdf";
 import type { AIStatus } from "../../shared/types.ts";
 import { getPublicSettings } from "../db.ts";
 import { asyncRoute, HttpError } from "../http.ts";
 import { generateQuestions, extractQuestionsFromText } from "../services/questionAI.ts";
+import {
+  extractQuestionsFromImage,
+  extractQuestionsFromPdf,
+  isImageFile,
+  isPdfFile,
+  isTextFile,
+} from "../services/worksheetExtraction.ts";
 import {
   clearChatMessages,
   listChatMessages,
@@ -13,12 +20,16 @@ import {
   runAssistant,
 } from "../services/assistant.ts";
 import { isAIConfigured } from "../services/ai.ts";
+import {
+  findWorksheetUpload,
+  recordWorksheetUpload,
+} from "../services/worksheetUploads.ts";
 
 export const aiRouter = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
 });
 
 aiRouter.get("/status", (_req, res) => {
@@ -102,42 +113,70 @@ aiRouter.post(
         ? req.body.sourceName.trim()
         : null;
     const file = req.file;
+    if (!sourceName && file) sourceName = file.originalname;
+    let fingerprintSource: Buffer | string;
+    let kind: "file" | "text" = file ? "file" : "text";
     if (file) {
-      sourceName = file.originalname;
-      const name = file.originalname.toLowerCase();
-      if (name.endsWith(".pdf")) {
-        let extracted: string;
-        try {
-          const result = await extractText(new Uint8Array(file.buffer), { mergePages: true });
-          extracted = result.text;
-        } catch (error) {
-          throw new HttpError(
-            `Could not read the PDF: ${error instanceof Error ? error.message : String(error)}`,
-            422,
-          );
-        }
-        text = extracted;
-        if (text.trim().length < 30) {
-          throw new HttpError(
-            "This PDF has little or no selectable text (it may be scanned). OCR is not bundled; upload a text-based PDF or paste the worksheet text.",
-            422,
-          );
-        }
-      } else if (/\.(txt|md|markdown|csv|tex)$/i.test(name)) {
-        text = file.buffer.toString("utf8");
-      } else if (/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(name)) {
+      fingerprintSource = file.buffer;
+      if (!isPdfFile(file.originalname) && !isImageFile(file.originalname) && !isTextFile(file.originalname)) {
         throw new HttpError(
-          "Image worksheets are not supported by the configured text model. Convert the image to a text-based PDF or paste the text.",
+          "Unsupported file type. Use PDF, PNG/JPEG/WebP/GIF/BMP/TIFF/AVIF/HEIC/SVG, TXT, Markdown, CSV or TeX.",
           415,
         );
-      } else {
-        throw new HttpError("Unsupported file type. Use PDF, TXT, Markdown, CSV or TeX.", 415);
       }
+      if (isTextFile(file.originalname)) {
+        text = file.buffer.toString("utf8");
+      }
+    } else {
+      fingerprintSource = text;
     }
-    if (!text.trim()) {
+    if (!file && !text.trim()) {
       throw new HttpError("Provide a file or paste worksheet text to extract.", 400);
     }
-    const result = await extractQuestionsFromText(text, sourceName);
+    const fingerprint = crypto.createHash("sha256").update(fingerprintSource).digest("hex");
+    const force = String(req.body?.force ?? "").toLowerCase() === "true" || req.body?.force === "1";
+    const duplicate = findWorksheetUpload({
+      fingerprint,
+      fileName: file?.originalname ?? null,
+      kind,
+    });
+    if (duplicate && !force) {
+      const duplicateResult: import("../../shared/types.ts").ExtractionResult = {
+        questions: [],
+        warnings: [
+          `This worksheet matches an earlier upload (${duplicate.sourceName ?? duplicate.fileName ?? "unknown source"}) from ${duplicate.lastUploadedAt}. Uploading it again will create duplicate questions.`,
+        ],
+        sourceName,
+        storedQuestionIds: [],
+        duplicate: {
+          uploadId: duplicate.id,
+          sourceName: duplicate.sourceName,
+          fileName: duplicate.fileName,
+          uploadedAt: duplicate.lastUploadedAt,
+          questionCount: duplicate.questionCount,
+        },
+      };
+      res.json(duplicateResult);
+      return;
+    }
+
+    let result: import("../../shared/types.ts").ExtractionResult;
+    if (file && isPdfFile(file.originalname)) {
+      result = await extractQuestionsFromPdf(file.buffer, sourceName);
+    } else if (file && isImageFile(file.originalname)) {
+      result = await extractQuestionsFromImage(file.buffer, file.originalname, sourceName);
+    } else {
+      if (!text.trim()) throw new HttpError("The text file is empty.", 400);
+      result = await extractQuestionsFromText(text, sourceName);
+    }
+    recordWorksheetUpload({
+      fingerprint,
+      fileName: file?.originalname ?? null,
+      sourceName,
+      kind,
+      byteSize: file?.size ?? Buffer.byteLength(text),
+      questionCount: result.storedQuestionIds.length,
+    });
     res.json(result);
   }),
 );

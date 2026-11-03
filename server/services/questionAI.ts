@@ -9,7 +9,7 @@ import {
   type QuestionType,
 } from "../../shared/types.ts";
 import { getDb, getAIConfig, nowIso, rowToQuestion } from "../db.ts";
-import { chatCompletion, parseJsonResponse, AIError } from "./ai.ts";
+import { chatCompletion, parseJsonResponse, AIError, type AIContentPart } from "./ai.ts";
 import { loadMasteryContext } from "./masteryService.ts";
 
 interface CatalogSubtopic {
@@ -415,6 +415,214 @@ ${catalogText(catalog, filter)}`;
   return { questions: getQuestionsByIds(ids), warnings };
 }
 
+function storeExtractedQuestions(
+  rawQuestions: unknown[],
+  initialWarnings: string[],
+  sourceName: string | null,
+): ExtractionResult {
+  const catalog = loadCatalog();
+  const warnings = [...initialWarnings];
+  const extracted: ExtractedQuestion[] = [];
+  const storedIds: number[] = [];
+
+  for (const raw of rawQuestions) {
+    const check = aiQuestionSchema.safeParse(raw);
+    if (!check.success) {
+      warnings.push(`Skipped a malformed extracted question: ${check.error.issues[0]?.message ?? "invalid shape"}.`);
+      continue;
+    }
+    const question: AIQuestion = check.data;
+    const resolved = resolveClassification(catalog, {
+      subjectId: question.subjectId,
+      chapterId: question.chapterId,
+      subtopicId: question.subtopicId,
+      subjectName: question.subjectName,
+      chapterName: question.chapterName,
+      subtopicName: question.subtopicName,
+    });
+    const flags = [...(question.flags ?? [])];
+    if (!resolved.subjectId) flags.push("unmapped subject");
+    if (!resolved.chapterId) flags.push("unmapped chapter");
+    if (!resolved.subtopicId) flags.push("unmapped subtopic");
+    if (!(question.answer ?? "").trim()) flags.push("missing answer");
+    if ((question.confidence ?? 0) < 0.6) flags.push("low extraction confidence");
+    if (flags.length > 0) warnings.push(`Review: ${question.prompt.slice(0, 70)}… — ${flags.join(", ")}`);
+    const status = (question.answer ?? "").trim() && flags.length === 0 ? "approved" : "needs_review";
+    const extractedQuestion: ExtractedQuestion = {
+      prompt: question.prompt,
+      options: question.options ?? null,
+      answer: question.answer ?? "",
+      solution: question.solution ?? "",
+      questionType: question.questionType ?? "short",
+      difficulty: question.difficulty ?? "medium",
+      marks: question.marks ?? null,
+      subjectId: resolved.subjectId,
+      chapterId: resolved.chapterId,
+      subtopicId: resolved.subtopicId,
+      subjectName: question.subjectName ?? null,
+      chapterName: question.chapterName ?? null,
+      subtopicName: question.subtopicName ?? null,
+      confidence: question.confidence ?? 0.5,
+      flags,
+    };
+    extracted.push(extractedQuestion);
+    if (resolved.subjectId) {
+      storedIds.push(
+        insertQuestion({
+          subjectId: resolved.subjectId,
+          chapterId: resolved.chapterId,
+          subtopicId: resolved.subtopicId,
+          sourceType: "uploaded",
+          sourceRef: sourceName ?? "Uploaded worksheet",
+          prompt: question.prompt,
+          options: question.options ?? null,
+          answer: question.answer ?? "",
+          solution: question.solution ?? "",
+          questionType: question.questionType ?? "short",
+          difficulty: question.difficulty ?? "medium",
+          marks: question.marks ?? null,
+          status,
+          flags,
+        }),
+      );
+    }
+  }
+
+  return {
+    questions: extracted,
+    warnings: [...new Set(warnings)].slice(0, 100),
+    sourceName,
+    storedQuestionIds: storedIds,
+  };
+}
+
+function visionExtractionPrompt(
+  sourceName: string | null,
+  catalog: Catalog,
+  batchNumber: number,
+  batchCount: number,
+  firstPage: number,
+  lastPage: number,
+  totalPages: number,
+): string {
+  return `Extract every question from the attached worksheet page image(s), reading directly from the image pixels. Do not rely on OCR text.
+
+The images are page images in reading order: pages ${firstPage}–${lastPage} of ${totalPages}. This is batch ${batchNumber} of ${batchCount}.
+
+Rules:
+- Transcribe the text and mathematics visibly present in the images. Preserve square roots, exponents, subscripts, fractions, integrals, vectors, units, option labels, and answer keys exactly.
+- Prefer Unicode mathematical symbols (√, ², ³, ×, ÷, −, π, θ, →, ∞) over dropping symbols. Use LaTeX only when it is clearer than Unicode.
+- Identify the correct subject, chapter and subtopic from the syllabus catalog. Use exact catalog names. If a subtopic is clear, use it even when the chapter name is abbreviated. If you are not confident about the exact classification, choose the closest catalog entry and add "classification uncertain" to flags.
+- Extract answer keys and marking schemes when visible. Otherwise use "" and add "missing answer" to flags.
+- Flag unclear handwriting/scans, missing diagrams, ambiguous answers, unreliable keys, cut-off content, or questions that may continue onto another page.
+- Only flag issues that affect whether the question can be trusted or attempted. Do not flag the absence of marks, a worked solution, or a source citation by itself.
+- Set confidence between 0 and 1 for each question.
+- For MCQ questions, preserve exactly four options and put the key (A/B/C/D) in "answer".
+- Do not invent text, questions or answer keys. If an image is unreadable, return fewer questions and explain in warnings.
+- Return JSON only, with no markdown fences:
+{"questions":[{"prompt":"...","options":["..."] or null,"answer":"...","solution":"...","questionType":"mcq|numeric|short|long","difficulty":"easy|medium|hard","marks":null,"subjectName":"...","chapterName":"...","subtopicName":"...","confidence":0.8,"flags":[]}],"warnings":[]}
+
+Syllabus catalog:
+${catalogText(catalog)}
+
+Source: ${sourceName ?? "uploaded worksheet image"}`;
+}
+
+export async function extractQuestionsFromImages(
+  images: string[],
+  sourceName: string | null,
+): Promise<ExtractionResult> {
+  if (images.length === 0) throw new AIError("No page images were produced for extraction.", 400);
+  const config = getAIConfig();
+  const catalog = loadCatalog();
+  const batchSize = 8;
+  const batchCount = Math.ceil(images.length / batchSize);
+  const rawQuestions: unknown[] = [];
+  const warnings: string[] = [];
+  let failedBatches = 0;
+  let lastError: unknown = null;
+
+  for (let start = 0; start < images.length; start += batchSize) {
+    const batch = images.slice(start, start + batchSize);
+    const batchNumber = Math.floor(start / batchSize) + 1;
+    const firstPage = start + 1;
+    const lastPage = start + batch.length;
+    const prompt = visionExtractionPrompt(
+      sourceName,
+      catalog,
+      batchNumber,
+      batchCount,
+      firstPage,
+      lastPage,
+      images.length,
+    );
+    const userContent: AIContentPart[] = [
+      { type: "text", text: prompt },
+      ...batch.map<AIContentPart>((url) => ({ type: "image_url", image_url: { url } })),
+    ];
+    try {
+      const result = await chatCompletion({
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a meticulous JEE worksheet transcriber and classifier. Read mathematics directly from images, never guess, and return valid JSON only.",
+          },
+          { role: "user", content: userContent },
+        ],
+        temperature: 0.1,
+        maxTokens: 8_000,
+        jsonMode: true,
+        model: config.visionModel || config.extractionModel || config.model,
+      });
+      let parsed: { questions: unknown[]; warnings?: string[] | null };
+      try {
+        parsed = aiResponseSchema.parse(parseJsonResponse(result.content));
+      } catch (error) {
+        failedBatches += 1;
+        lastError = error;
+        warnings.push(
+          `Vision batch ${batchNumber}/${batchCount} returned unusable JSON: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        continue;
+      }
+      rawQuestions.push(...parsed.questions);
+      warnings.push(...(parsed.warnings ?? []));
+    } catch (error) {
+      failedBatches += 1;
+      lastError = error;
+      warnings.push(
+        `Vision batch ${batchNumber}/${batchCount} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  if (rawQuestions.length === 0 && failedBatches === batchCount) {
+    if (lastError instanceof AIError) throw lastError;
+    throw new AIError(
+      `Vision extraction failed for every page: ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }`,
+      502,
+    );
+  }
+  if (failedBatches > 0) {
+    warnings.unshift(
+      `${failedBatches} of ${batchCount} page batch(es) could not be extracted.`,
+    );
+  }
+  if (batchCount > 1) {
+    warnings.push(
+      "Large worksheet was read in page batches; answer keys printed on a separate page may need manual checking.",
+    );
+  }
+  return storeExtractedQuestions(rawQuestions, warnings, sourceName);
+}
+
 export async function extractQuestionsFromText(
   text: string,
   sourceName: string | null,
@@ -432,10 +640,11 @@ export async function extractQuestionsFromText(
   const prompt = `Extract every question from the worksheet below for a JEE (Mains + Advanced) student.
 
 Rules:
-- Preserve the original question text and LaTeX/maths notation as faithfully as possible.
-- Identify the correct subject, chapter and subtopic from the syllabus catalog. Use the exact catalog names.
+- Preserve the original question text and mathematical notation as faithfully as possible.
+- Identify the correct subject, chapter and subtopic from the syllabus catalog. Use exact catalog names. If you are not confident about the exact classification, choose the closest catalog entry and add "classification uncertain" to flags.
 - Extract answer keys and marking schemes when present; otherwise use "" and add "missing answer" to flags.
-- Flag unclear OCR/text, missing diagrams, ambiguous answers, unreliable answer keys, or anything a human must review.
+- Flag unclear text, missing diagrams, ambiguous answers, unreliable answer keys, or anything a human must review.
+- Only flag issues that affect whether the question can be trusted or attempted. Do not flag the absence of marks, a worked solution, or a source citation by itself.
 - Set confidence between 0 and 1 for each question.
 - For MCQ questions, preserve exactly four options and put the key (A/B/C/D) in "answer".
 - Return JSON only:
@@ -473,76 +682,6 @@ ${clipped}
       502,
     );
   }
-  const extracted: ExtractedQuestion[] = [];
-  const storedIds: number[] = [];
   warnings.push(...(parsed.warnings ?? []));
-
-  for (const raw of parsed.questions) {
-    const check = aiQuestionSchema.safeParse(raw);
-    if (!check.success) {
-      warnings.push(`Skipped a malformed extracted question: ${check.error.issues[0]?.message ?? "invalid shape"}.`);
-      continue;
-    }
-    const question: AIQuestion = check.data;
-    const resolved = resolveClassification(catalog, {
-      subjectId: question.subjectId,
-      chapterId: question.chapterId,
-      subtopicId: question.subtopicId,
-      subjectName: question.subjectName,
-      chapterName: question.chapterName,
-      subtopicName: question.subtopicName,
-    });
-    const flags = [...(question.flags ?? [])];
-    if (!resolved.subjectId) flags.push("unmapped subject");
-    if (!resolved.chapterId) flags.push("unmapped chapter");
-    if (!resolved.subtopicId) flags.push("unmapped subtopic");
-    if (!(question.answer ?? "").trim()) flags.push("missing answer");
-    if ((question.confidence ?? 0) < 0.6) flags.push("low extraction confidence");
-    if (flags.length > 0) warnings.push(`Review: ${question.prompt.slice(0, 70)}… — ${flags.join(", ")}`);
-    const extractedQuestion: ExtractedQuestion = {
-      prompt: question.prompt,
-      options: question.options ?? null,
-      answer: question.answer ?? "",
-      solution: question.solution ?? "",
-      questionType: question.questionType ?? "short",
-      difficulty: question.difficulty ?? "medium",
-      marks: question.marks ?? null,
-      subjectId: resolved.subjectId,
-      chapterId: resolved.chapterId,
-      subtopicId: resolved.subtopicId,
-      subjectName: question.subjectName ?? null,
-      chapterName: question.chapterName ?? null,
-      subtopicName: question.subtopicName ?? null,
-      confidence: question.confidence ?? 0.5,
-      flags,
-    };
-    extracted.push(extractedQuestion);
-    if (resolved.subjectId) {
-      storedIds.push(
-        insertQuestion({
-          subjectId: resolved.subjectId,
-          chapterId: resolved.chapterId,
-          subtopicId: resolved.subtopicId,
-          sourceType: "uploaded",
-          sourceRef: sourceName ?? "Uploaded worksheet",
-          prompt: question.prompt,
-          options: question.options ?? null,
-          answer: question.answer ?? "",
-          solution: question.solution ?? "",
-          questionType: question.questionType ?? "short",
-          difficulty: question.difficulty ?? "medium",
-          marks: question.marks ?? null,
-          status: "needs_review",
-          flags,
-        }),
-      );
-    }
-  }
-
-  return {
-    questions: extracted,
-    warnings: [...new Set(warnings)].slice(0, 100),
-    sourceName,
-    storedQuestionIds: storedIds,
-  };
+  return storeExtractedQuestions(parsed.questions, warnings, sourceName);
 }

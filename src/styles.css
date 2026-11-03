@@ -2124,6 +2124,7 @@ h3 {
   align-items: flex-start;
   border: 1px solid var(--border);
   border-radius: var(--radius-xs);
+  background: rgba(var(--text-rgb), 0.015);
   padding: 9px 11px;
   cursor: pointer;
   font-size: 12.5px;
@@ -2133,6 +2134,10 @@ h3 {
 }
 .option-item:hover {
   border-color: var(--border-strong);
+  background: rgba(var(--text-rgb), 0.04);
+}
+.option-item:disabled {
+  cursor: default;
 }
 .option-item.selected {
   border-color: rgba(var(--accent-rgb), 0.55);
@@ -3492,4 +3497,193 @@ h3 {
   border: none;
   border-top: 1px solid var(--border);
   margin: 12px 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Focus practice mode                                                */
+/* ------------------------------------------------------------------ */
+
+.practice-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.practice-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 13px 28px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(var(--bg-rgb), 0.78);
+  backdrop-filter: blur(18px);
+}
+
+.practice-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.practice-brand > span:last-child {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.practice-brand strong {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.09em;
+}
+.practice-brand small {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
+.practice-topbar-topic {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+.practice-topic-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.practice-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.practice-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
+  border-radius: 20px;
+  padding: 5px 10px;
+  background: rgba(var(--accent-rgb), 0.05);
+  font-variant-numeric: tabular-nums;
+}
+
+.practice-main {
+  flex: 1;
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+  animation: page-in 240ms ease both;
+}
+
+.practice-card {
+  padding: 24px 26px;
+}
+
+.practice-prompt {
+  margin: 20px 0 22px;
+  font-size: 19px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.practice-options .option-item {
+  font-size: 14px;
+  padding: 12px 14px;
+}
+
+.practice-answer {
+  min-height: 120px;
+  font-size: 14px;
+}
+
+.practice-utility-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 16px 0;
+}
+
+.practice-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  margin-top: 18px;
+  padding-top: 17px;
+}
+.practice-footer .result-grid {
+  min-width: min(380px, 100%);
+}
+
+.practice-feedback {
+  border-top: 1px solid var(--border);
+  margin-top: 18px;
+  padding-top: 17px;
+}
+
+.practice-footer-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.practice-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 0 2px;
+}
+.practice-progress .progress-track {
+  flex: 1;
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .practice-topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+  }
+  .practice-topbar-topic {
+    order: 3;
+    flex-basis: 100%;
+    text-align: left;
+  }
+  .practice-main {
+    padding: 20px 14px 50px;
+  }
+  .practice-card {
+    padding: 17px 15px;
+  }
+  .practice-prompt {
+    font-size: 16px;
+  }
+  .practice-footer .result-grid {
+    min-width: 100%;
+  }
+  .practice-timer {
+    font-size: 10px;
+  }
 }

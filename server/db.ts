@@ -35,7 +35,7 @@ export const DATA_DIR = process.env.STUDY_HUB_DATA_DIR
   : path.join(ROOT_DIR, "data");
 export const DB_PATH = path.join(DATA_DIR, "study-hub.db");
 export const BACKUP_DIR = path.join(DATA_DIR, "backups");
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
@@ -195,6 +195,18 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS worksheet_uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fingerprint TEXT NOT NULL UNIQUE,
+  file_name TEXT,
+  source_name TEXT,
+  kind TEXT NOT NULL DEFAULT 'file',
+  byte_size INTEGER,
+  question_count INTEGER NOT NULL DEFAULT 0,
+  first_uploaded_at TEXT NOT NULL,
+  last_uploaded_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pending_actions (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
@@ -215,6 +227,7 @@ CREATE INDEX IF NOT EXISTS idx_questions_chapter ON questions(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_questions_subtopic ON questions(subtopic_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_subtopic ON progress_snapshots(subtopic_id, computed_at);
+CREATE INDEX IF NOT EXISTS idx_uploads_filename ON worksheet_uploads(kind, file_name);
 `;
 
 const DEFAULT_SETTINGS: Record<string, string> = {
@@ -224,6 +237,7 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   aiBaseUrl: "https://api.deepseek.com",
   aiModel: "deepseek-chat",
   aiExtractionModel: "deepseek-chat",
+  aiVisionModel: "",
   aiApiKey: "",
 };
 
@@ -272,6 +286,35 @@ export function initDb(): DatabaseSync {
   const columns = db.prepare("PRAGMA table_info(attempts)").all() as { name: string }[];
   if (!columns.some((column) => column.name === "difficulty")) {
     db.exec("ALTER TABLE attempts ADD COLUMN difficulty TEXT");
+  }
+
+  if (existingVersion < 3) {
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE questions SET status = 'approved', updated_at = ?
+       WHERE status = 'needs_review'
+         AND (flags_json IS NULL OR flags_json = '[]')
+         AND trim(answer) <> ''`,
+    ).run(now);
+    db.exec(`
+      INSERT OR IGNORE INTO worksheet_uploads
+        (fingerprint, file_name, source_name, kind, byte_size, question_count, first_uploaded_at, last_uploaded_at)
+      SELECT
+        'legacy:' || lower(MIN(source_ref)),
+        MIN(source_ref),
+        MIN(source_ref),
+        'file',
+        NULL,
+        COUNT(*),
+        MIN(created_at),
+        MAX(created_at)
+      FROM questions
+      WHERE source_type = 'uploaded'
+        AND source_ref IS NOT NULL
+        AND trim(source_ref) <> ''
+        AND lower(trim(source_ref)) <> 'uploaded worksheet'
+      GROUP BY lower(source_ref)
+    `);
   }
 
   const appliedVersion = readSchemaVersion(db);
@@ -371,6 +414,7 @@ export function getAIConfig(): {
   baseUrl: string;
   model: string;
   extractionModel: string;
+  visionModel: string;
   apiKey: string;
   providerLabel: string;
 } {
@@ -383,6 +427,9 @@ export function getAIConfig(): {
     process.env.STUDY_HUB_AI_MODEL ?? process.env.DEEPSEEK_MODEL ?? getSetting("aiModel") ?? "deepseek-chat";
   const extractionModel =
     process.env.STUDY_HUB_AI_EXTRACTION_MODEL ?? getSetting("aiExtractionModel") ?? model;
+  const configuredVisionModel =
+    process.env.STUDY_HUB_AI_VISION_MODEL ?? getSetting("aiVisionModel") ?? "";
+  const visionModel = configuredVisionModel.trim() || extractionModel || model;
   const apiKey =
     process.env.STUDY_HUB_AI_API_KEY ??
     process.env.DEEPSEEK_API_KEY ??
@@ -392,6 +439,7 @@ export function getAIConfig(): {
     baseUrl: baseUrl.replace(/\/+$/, ""),
     model,
     extractionModel,
+    visionModel,
     apiKey,
     providerLabel: "DeepSeek-compatible",
   };
@@ -404,6 +452,7 @@ export function publicAISettings(): {
   apiKeyHint: string | null;
   providerLabel: string;
   extractionModel: string;
+  visionModel: string;
   updatedAt: string | null;
 } {
   const config = getAIConfig();
@@ -415,6 +464,7 @@ export function publicAISettings(): {
     apiKeyHint: key.length >= 4 ? `••••${key.slice(-4)}` : key.length > 0 ? "••••" : null,
     providerLabel: config.providerLabel,
     extractionModel: config.extractionModel,
+    visionModel: config.visionModel,
     updatedAt: getSetting("aiUpdatedAt"),
   };
 }

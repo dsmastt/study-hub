@@ -170,6 +170,25 @@ export const api = {
     request<{ questions: Question[]; total: number }>(withQuery("/api/questions", filters)),
   question: (id: number) =>
     request<{ question: Question; attempts: Attempt[] }>(`/api/questions/${id}`),
+  nextQuestion: (params: {
+    subjectId?: number;
+    chapterId?: number;
+    subtopicId?: number;
+    difficulty?: string;
+    currentId?: number;
+    excludeIds?: number[];
+  }) =>
+    request<{ question: Question | null; remaining: number; total: number }>(
+      withQuery("/api/questions/next", {
+        ...params,
+        excludeIds: params.excludeIds?.length ? params.excludeIds.join(",") : undefined,
+      }),
+    ),
+  resetQuestions: () =>
+    request<{ deleted: number; backupPath: string }>("/api/questions/reset", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "RESET" }),
+    }),
   createQuestion: (input: Record<string, unknown>) =>
     request<Question>("/api/questions", { method: "POST", body: JSON.stringify(input) }),
   updateQuestion: (id: number, input: Record<string, unknown>) =>
@@ -244,11 +263,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  extract: (input: { text?: string; file?: File; sourceName?: string }) => {
+  extract: (input: { text?: string; file?: File; sourceName?: string; force?: boolean }) => {
     const form = new FormData();
     if (input.file) form.append("file", input.file);
     if (input.text) form.append("text", input.text);
     if (input.sourceName) form.append("sourceName", input.sourceName);
+    if (input.force) form.append("force", "1");
     return request<ExtractionResult>("/api/ai/extract", { method: "POST", body: form });
   },
 };
