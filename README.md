@@ -13,6 +13,7 @@ The app tracks Physics, Chemistry and Mathematics by **subject → chapter → s
 - **Deterministic mastery** — calculated from recorded attempts with correctness, difficulty, recency, hints/solutions, repetition damping and evidence thresholds. No LLM-invented percentages.
 - **Question system** — manual questions, AI-generated sets, worksheet upload with **AI vision extraction** (images, scanned PDFs and text PDFs), automatic approval of clean extractions, duplicate-upload detection, a review queue for flagged content, and attempt recording.
 - **Focus practice** — a distraction-free mode that serves one approved question at a time and, after recording an attempt, loads the next unseen approved question from the same subtopic.
+- **Formula Hub** — an Obsidian-style force graph of subjects → chapters → topics with 188 seeded formulas/constants, add-your-own formulas, KaTeX rendering, and a self-graded flashcard recall drill. Questions can also be filtered to hide already-attempted items.
 - **Planner** — tasks, assignments, projects, tests, exams and revision; week strip and month calendar; deadline/priority/weakness-based urgency ordering.
 - **Sessions and timers** — session records, explicit focus/break start, pause, resume, end, configurable targets, notes and evidence-based summaries. No lockouts or quiz gates.
 - **AI assistant** — DeepSeek-compatible chat with explicit tools, server-side validation, approval for consequential actions, no shell access, and a deliberately restrained personality.
@@ -106,6 +107,14 @@ Open **Focus mode** from the Questions page (or **Focus** on an individual quest
 
 ---
 
+## Formula Hub
+
+Open **Formula Hub** from the sidebar. The graph starts with the three subjects; click a subject to reveal its chapters, a chapter to reveal topics, and a topic to display the formulas attached to it (and any chapter/subject-level formulas). Use the zoom controls or drag to pan.
+
+- **Add formula** at the currently selected node, or from the page header. Formulas support LaTeX/Unicode and are rendered with KaTeX. Notes, tags and topic classification are editable; formulas can be deleted.
+- **Flashcards** drills the formula bank one card at a time. Think of the formula, reveal it, then choose **Got it** or **Didn’t Get It**. Missed cards are prioritised in the next round. This is self-reported recall, separate from question mastery.
+- The bank is seeded once with 188 formulas and constants across Physics, Chemistry and Mathematics; user-added formulas are stored locally and included in the graph and flashcards.
+
 ## The `study` launcher
 
 Installed to `~/.local/bin/study` by `pnpm install-command`. Config lives at:
@@ -156,7 +165,7 @@ STUDY_HUB_DATA_DIR=/mnt/Vault/study-hub-data pnpm start
 
 The schema is versioned in the `meta` table. Before a schema migration the app creates a consistent backup and aborts startup if that backup fails. Manual backups are available in **Settings → Data / Recovery**. Existing data/backup files are re-secured to owner-only permissions at startup.
 
-Tables include: `subjects`, `chapters`, `subtopics`, `questions`, `attempts`, `tasks`, `sessions`, `progress_snapshots`, `worksheet_uploads`, `chat_messages`, `pending_actions`, `settings`, `meta`.
+Tables include: `subjects`, `chapters`, `subtopics`, `questions`, `attempts`, `tasks`, `sessions`, `progress_snapshots`, `worksheet_uploads`, `formulas`, `formula_reviews`, `chat_messages`, `pending_actions`, `settings`, `meta`.
 
 The app never creates invented attempts, sessions or mastery values. Empty views remain empty until you record real activity.
 
@@ -223,6 +232,8 @@ server/
     questionAI.ts       generation + textual extraction
     worksheetExtraction.ts  PDF/image rendering + AI vision extraction
     worksheetUploads.ts     duplicate-upload fingerprints/history
+    formulas.ts             formula graph/flashcard queries
+  formulaSeed.ts          seeded formula library
     assistant.ts        tool definitions, confirmation flow, chat storage
     ai.ts               OpenAI-compatible client
     sessions.ts         timers and summaries
@@ -234,7 +245,7 @@ src/                    React + TypeScript frontend
   api/                  typed client and React Query hooks
   components/           layout, charts, timer, attempt/editor modals, UI kit
   pages/                dashboard, syllabus, chapter, questions, practice,
-                        planner, sessions, assistant, settings
+                        formula hub, planner, sessions, assistant, settings
   styles.css            command-center design system
 scripts/
   study                 Hyprland launcher
@@ -255,7 +266,7 @@ pnpm test        # mastery engine (12 tests)
 pnpm build       # production frontend
 ```
 
-Manual smoke tests used during development covered: session start → focus timer, task creation, manual question creation, attempt recording, mastery evidence, planning, ending a session, session summaries, assistant tool approval against a mock OpenAI-compatible server, AI vision extraction from a worksheet image plus a scanned image-only PDF (roots and superscripts preserved), same-topic focus-mode sequencing, duplicate-upload warnings, auto-approval/review behaviour, and the question-bank reset (with backup).
+Manual smoke tests used during development covered: session start → focus timer, task creation, manual question creation, attempt recording, mastery evidence, planning, ending a session, session summaries, assistant tool approval against a mock OpenAI-compatible server, AI vision extraction from a worksheet image plus a scanned image-only PDF (roots and superscripts preserved), same-topic focus-mode sequencing, duplicate-upload warnings, auto-approval/review behaviour, the question-bank reset (with backup), Formula Hub graph navigation/editing, flashcard grading, and the “hide attempted” question filter.
 
 The `study` launcher supports `--dry-run`; it was verified against a live Hyprland session with all four target workspaces occupied, correctly overflowing to 5–8.
 

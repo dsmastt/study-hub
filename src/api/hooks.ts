@@ -19,6 +19,9 @@ export const queryKeys = {
   system: ["system"] as const,
   aiStatus: ["ai", "status"] as const,
   messages: ["ai", "messages"] as const,
+  formulaTree: ["formulas", "tree"] as const,
+  formulas: (filters: Record<string, unknown>) => ["formulas", "list", filters] as const,
+  formula: (id: number) => ["formulas", "detail", id] as const,
 };
 
 export function useDashboard() {
@@ -112,6 +115,18 @@ export function useChatMessages() {
   return useQuery({ queryKey: queryKeys.messages, queryFn: api.messages });
 }
 
+export function useFormulaTree() {
+  return useQuery({ queryKey: queryKeys.formulaTree, queryFn: api.formulaTree });
+}
+
+export function useFormulas(filters: Record<string, unknown> = {}, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.formulas(filters),
+    queryFn: () => api.formulas(filters),
+    enabled,
+  });
+}
+
 export function useInvalidateAll() {
   const queryClient = useQueryClient();
   return async () => {
@@ -126,6 +141,7 @@ export function useInvalidateAll() {
       queryClient.invalidateQueries({ queryKey: ["session"] }),
       queryClient.invalidateQueries({ queryKey: ["settings"] }),
       queryClient.invalidateQueries({ queryKey: ["ai"] }),
+      queryClient.invalidateQueries({ queryKey: ["formulas"] }),
     ]);
   };
 }

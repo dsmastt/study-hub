@@ -10,6 +10,7 @@ import Assistant from "./pages/Assistant.tsx";
 import SettingsPage from "./pages/Settings.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import Practice from "./pages/Practice.tsx";
+import FormulaHub from "./pages/FormulaHub.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="syllabus" element={<Syllabus />} />
         <Route path="syllabus/:chapterId" element={<ChapterPage />} />
         <Route path="questions" element={<Questions />} />
+        <Route path="formulas" element={<FormulaHub />} />
         <Route path="planner" element={<Planner />} />
         <Route path="sessions" element={<Sessions />} />
         <Route path="assistant" element={<Assistant />} />

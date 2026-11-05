@@ -7,6 +7,9 @@ import type {
   ChatResponse,
   DashboardData,
   ExtractionResult,
+  Formula,
+  FormulaReviewResult,
+  FormulaTreeData,
   LauncherSummary,
   MasteryBreakdown,
   Question,
@@ -131,6 +134,7 @@ export interface QuestionFilters {
   status?: string;
   sourceType?: string;
   search?: string;
+  attempted?: "yes" | "no";
   limit?: number;
   offset?: number;
 }
@@ -271,4 +275,22 @@ export const api = {
     if (input.force) form.append("force", "1");
     return request<ExtractionResult>("/api/ai/extract", { method: "POST", body: form });
   },
+
+  formulaTree: () => request<FormulaTreeData>("/api/formulas/tree"),
+  formulas: (filters: Record<string, unknown> = {}) =>
+    request<Formula[]>(withQuery("/api/formulas", filters)),
+  formula: (id: number) => request<Formula>(`/api/formulas/${id}`),
+  createFormula: (input: Record<string, unknown>) =>
+    request<Formula>("/api/formulas", { method: "POST", body: JSON.stringify(input) }),
+  updateFormula: (id: number, input: Record<string, unknown>) =>
+    request<Formula>(`/api/formulas/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  deleteFormula: (id: number) =>
+    request<{ ok: boolean }>(`/api/formulas/${id}`, { method: "DELETE" }),
+  formulaFlashcards: (filters: Record<string, unknown> = {}) =>
+    request<Formula[]>(withQuery("/api/formulas/flashcards", filters)),
+  reviewFormula: (id: number, result: FormulaReviewResult) =>
+    request<Formula>(`/api/formulas/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify({ result }),
+    }),
 };

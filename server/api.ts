@@ -8,6 +8,7 @@ import { sessionsRouter } from "./routes/sessions.ts";
 import { settingsRouter } from "./routes/settings.ts";
 import { themeRouter } from "./routes/theme.ts";
 import { aiRouter } from "./routes/ai.ts";
+import { formulasRouter } from "./routes/formulas.ts";
 
 export const apiRouter = Router();
 
@@ -22,3 +23,4 @@ apiRouter.use("/sessions", sessionsRouter);
 apiRouter.use("/settings", settingsRouter);
 apiRouter.use("/theme", themeRouter);
 apiRouter.use("/ai", aiRouter);
+apiRouter.use("/formulas", formulasRouter);

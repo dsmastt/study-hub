@@ -3687,3 +3687,501 @@ h3 {
     font-size: 10px;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Formula Hub                                                        */
+/* ------------------------------------------------------------------ */
+
+.formula-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(340px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.formula-graph-panel {
+  min-width: 0;
+}
+
+.formula-graph-shell {
+  position: relative;
+  height: 660px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 45%, rgba(var(--accent-rgb), 0.055), transparent 70%),
+    repeating-linear-gradient(0deg, transparent 0 39px, rgba(var(--accent-rgb), 0.025) 39px 40px),
+    repeating-linear-gradient(90deg, transparent 0 39px, rgba(var(--accent-rgb), 0.025) 39px 40px),
+    var(--bg-deep);
+  touch-action: none;
+}
+
+.formula-graph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+.formula-graph-svg:active {
+  cursor: grabbing;
+}
+
+.formula-graph-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: rgba(var(--bg-deep-rgb), 0.78);
+  backdrop-filter: blur(8px);
+}
+.formula-graph-controls .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.formula-graph-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: flex;
+  gap: 10px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: rgba(var(--bg-deep-rgb), 0.72);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  backdrop-filter: blur(8px);
+}
+.formula-graph-legend span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.formula-graph-legend i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.legend-subject { background: var(--chart-1); }
+.legend-chapter { border: 1px solid var(--chart-2); }
+.legend-subtopic { background: var(--border-strong); }
+
+.formula-graph-hint {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  z-index: 2;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  color: var(--text-ghost);
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+.formula-graph-link {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-opacity: 0.3;
+}
+
+.formula-graph-node {
+  cursor: pointer;
+}
+.formula-graph-node circle {
+  transition: stroke-width var(--transition), opacity var(--transition);
+}
+.formula-graph-node:hover circle {
+  opacity: 1;
+}
+.formula-graph-node.active circle {
+  filter: drop-shadow(0 0 8px rgba(var(--accent-rgb), 0.35));
+}
+.formula-graph-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--bg-deep);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.formula-graph-label.subject {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.formula-graph-label.chapter {
+  font-size: 10.5px;
+  font-weight: 500;
+}
+.formula-graph-count {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  fill: var(--text-ghost);
+  pointer-events: none;
+}
+
+.formula-side-panel {
+  max-height: 820px;
+  overflow-y: auto;
+  min-height: 420px;
+}
+
+.formula-intro {
+  padding: 24px 4px 8px;
+}
+.formula-intro-graphic {
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  background: rgba(var(--accent-rgb), 0.07);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+.formula-intro h3 {
+  font-size: 17px;
+  margin-bottom: 7px;
+}
+.formula-intro-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 16px;
+}
+.formula-intro-steps span {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 7px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.formula-panel-list {
+  padding-top: 2px;
+}
+.formula-group {
+  margin-bottom: 16px;
+}
+.formula-group:last-child {
+  margin-bottom: 0;
+}
+.formula-group-title {
+  margin-bottom: 7px;
+  color: var(--text-faint);
+}
+.formula-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.formula-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: rgba(var(--text-rgb), 0.02);
+  padding: 10px 11px;
+  cursor: pointer;
+  transition: all var(--transition);
+  color: var(--text);
+}
+.formula-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.04);
+}
+.formula-card > .between > strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.formula-card-expression {
+  margin: 8px 0 6px;
+  overflow-x: auto;
+  color: var(--text-dim);
+}
+.formula-card-expression .formula-math {
+  font-size: 0.88em;
+}
+.formula-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-ghost);
+  letter-spacing: 0.03em;
+}
+
+.formula-math {
+  color: var(--text);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+.formula-math-block .katex-display {
+  margin: 0;
+  padding: 2px 0;
+  overflow: visible;
+}
+.formula-math .katex {
+  font-size: 1.02em;
+}
+.formula-fallback {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+.formula-detail .back-link {
+  margin-bottom: 12px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.formula-detail h2 {
+  font-size: 20px;
+}
+.formula-detail-expression {
+  margin: 16px 0 12px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: rgba(var(--bg-deep-rgb), 0.5);
+  overflow-x: auto;
+}
+.formula-notes {
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.formula-review-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 14px 0 6px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.formula-review-stats strong {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.formula-editor-input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.formula-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 12px;
+  background: rgba(var(--bg-deep-rgb), 0.4);
+  overflow-x: auto;
+}
+
+/* Flashcards */
+.flashcard-layout {
+  display: block;
+}
+.flashcard-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.flashcard-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.flashcard-stats strong {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.flashcard-stage {
+  margin-top: 18px;
+}
+.flashcard-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.flashcard-progress .progress-track {
+  flex: 1;
+  margin: 0;
+}
+.flashcard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(ellipse 70% 90% at 50% 0%, rgba(var(--accent-rgb), 0.06), transparent 65%),
+    rgba(var(--panel-rgb), 0.55);
+  padding: 22px;
+  min-height: 330px;
+  display: flex;
+  flex-direction: column;
+}
+.flashcard.revealed {
+  border-color: rgba(var(--accent-rgb), 0.28);
+}
+.flashcard-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.flashcard-title {
+  font-size: 24px;
+  letter-spacing: -0.03em;
+  margin-top: 6px;
+}
+.flashcard-front {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 18px;
+  padding: 24px 10px 10px;
+  text-align: center;
+}
+.flashcard-instruction {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.flashcard-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+.flashcard-front .flashcard-tags {
+  justify-content: center;
+}
+.flashcard-back {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 18px;
+}
+.flashcard-expression {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: rgba(var(--bg-deep-rgb), 0.48);
+  padding: 18px 16px;
+  overflow-x: auto;
+}
+.flashcard-expression .formula-math {
+  font-size: 1.2em;
+}
+.flashcard-notes {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.flashcard-answer-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+}
+.flashcard-answer-row .btn {
+  min-width: 140px;
+}
+.flashcard-complete {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 7px;
+  padding: 40px 20px;
+}
+.flashcard-complete-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(var(--success-rgb), 0.3);
+  background: rgba(var(--success-rgb), 0.07);
+  color: var(--success);
+  margin-bottom: 5px;
+}
+.flashcard-complete h3 {
+  font-size: 20px;
+}
+.flashcard-complete .btn {
+  margin-top: 12px;
+}
+
+@media (max-width: 1180px) {
+  .formula-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .formula-side-panel {
+    max-height: none;
+  }
+  .formula-graph-shell {
+    height: 580px;
+  }
+}
+
+@media (max-width: 700px) {
+  .formula-graph-shell {
+    height: 460px;
+  }
+  .formula-graph-legend {
+    display: none;
+  }
+  .formula-graph-hint {
+    font-size: 7.5px;
+  }
+  .flashcard {
+    padding: 15px;
+    min-height: 280px;
+  }
+  .flashcard-title {
+    font-size: 19px;
+  }
+  .flashcard-answer-row .btn {
+    min-width: 0;
+    flex: 1;
+  }
+}

@@ -16,6 +16,7 @@ const listQuerySchema = z.object({
   status: z.enum(["draft", "needs_review", "approved", "archived"]).optional(),
   sourceType: z.enum(["manual", "uploaded", "generated"]).optional(),
   search: z.string().max(200).optional(),
+  attempted: z.enum(["yes", "no"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -57,6 +58,11 @@ questionsRouter.get("/", (req, res) => {
   if (query.search) {
     conditions.push("q.prompt LIKE ?");
     params.push(`%${query.search}%`);
+  }
+  if (query.attempted === "no") {
+    conditions.push("(SELECT COUNT(*) FROM attempts a WHERE a.question_id = q.id) = 0");
+  } else if (query.attempted === "yes") {
+    conditions.push("(SELECT COUNT(*) FROM attempts a WHERE a.question_id = q.id) > 0");
   }
   const rows = getDb()
     .prepare(

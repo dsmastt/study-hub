@@ -428,6 +428,61 @@ export interface LauncherConfig {
   createSession?: boolean;
 }
 
+export type FormulaSource = "seed" | "user";
+export type FormulaReviewResult = "got_it" | "missed";
+
+export interface Formula {
+  id: number;
+  subjectId: number;
+  chapterId: number | null;
+  subtopicId: number | null;
+  subjectName: string | null;
+  chapterName: string | null;
+  subtopicName: string | null;
+  title: string;
+  expression: string;
+  notes: string;
+  tags: string[];
+  source: FormulaSource;
+  reviewCount: number;
+  gotItCount: number;
+  missedCount: number;
+  lastReviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FormulaTreeSubject {
+  id: number;
+  code: string;
+  name: string;
+  formulaCount: number;
+  chapterCount: number;
+}
+
+export interface FormulaTreeChapter {
+  id: number;
+  subjectId: number;
+  code: string;
+  name: string;
+  formulaCount: number;
+  subtopicCount: number;
+}
+
+export interface FormulaTreeSubtopic {
+  id: number;
+  chapterId: number;
+  name: string;
+  formulaCount: number;
+}
+
+export interface FormulaTreeData {
+  subjects: FormulaTreeSubject[];
+  chapters: FormulaTreeChapter[];
+  subtopics: FormulaTreeSubtopic[];
+  totalFormulas: number;
+}
+
 export interface LauncherSummary {
   path: string;
   exists: boolean;

@@ -28,6 +28,7 @@ import type {
   TimerState,
 } from "../shared/types.ts";
 import { JEE_SYLLABUS } from "./seed.ts";
+import { FORMULA_SEED } from "./formulaSeed.ts";
 
 export const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DATA_DIR = process.env.STUDY_HUB_DATA_DIR
@@ -35,7 +36,7 @@ export const DATA_DIR = process.env.STUDY_HUB_DATA_DIR
   : path.join(ROOT_DIR, "data");
 export const DB_PATH = path.join(DATA_DIR, "study-hub.db");
 export const BACKUP_DIR = path.join(DATA_DIR, "backups");
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
@@ -195,6 +196,27 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS formulas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  chapter_id INTEGER REFERENCES chapters(id) ON DELETE CASCADE,
+  subtopic_id INTEGER REFERENCES subtopics(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  expression TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  source TEXT NOT NULL DEFAULT 'user',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS formula_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  formula_id INTEGER NOT NULL REFERENCES formulas(id) ON DELETE CASCADE,
+  result TEXT NOT NULL,
+  reviewed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS worksheet_uploads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   fingerprint TEXT NOT NULL UNIQUE,
@@ -228,6 +250,8 @@ CREATE INDEX IF NOT EXISTS idx_questions_subtopic ON questions(subtopic_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_subtopic ON progress_snapshots(subtopic_id, computed_at);
 CREATE INDEX IF NOT EXISTS idx_uploads_filename ON worksheet_uploads(kind, file_name);
+CREATE INDEX IF NOT EXISTS idx_formulas_subject ON formulas(subject_id, chapter_id, subtopic_id);
+CREATE INDEX IF NOT EXISTS idx_formula_reviews_formula ON formula_reviews(formula_id, reviewed_at);
 `;
 
 const DEFAULT_SETTINGS: Record<string, string> = {
@@ -329,7 +353,70 @@ export function initDb(): DatabaseSync {
   }
 
   seedSyllabus(db);
+  seedFormulas(db);
   return db;
+}
+
+function seedFormulas(database: DatabaseSync): void {
+  const seeded = database.prepare("SELECT value FROM meta WHERE key = 'formulasSeeded'").get() as
+    | { value?: string }
+    | undefined;
+  if (seeded?.value === "1") return;
+  const existing = (database.prepare("SELECT COUNT(*) AS count FROM formulas").get() as { count: number }).count;
+  if (existing > 0) {
+    database.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('formulasSeeded', '1')").run();
+    return;
+  }
+
+  const subjects = database.prepare("SELECT id, code FROM subjects").all() as { id: number; code: string }[];
+  const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject.id]));
+  const chapters = database
+    .prepare("SELECT id, subject_id, code FROM chapters")
+    .all() as { id: number; subject_id: number; code: string }[];
+  const chapterByKey = new Map(chapters.map((chapter) => [`${chapter.subject_id}:${chapter.code}`, chapter.id]));
+  const subtopics = database
+    .prepare("SELECT id, chapter_id, name FROM subtopics")
+    .all() as { id: number; chapter_id: number; name: string }[];
+  const subtopicByKey = new Map(
+    subtopics.map((subtopic) => [`${subtopic.chapter_id}:${subtopic.name.trim().toLowerCase()}`, subtopic.id]),
+  );
+
+  const insert = database.prepare(
+    `INSERT INTO formulas
+      (subject_id, chapter_id, subtopic_id, title, expression, notes, tags_json, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'seed', ?, ?)`,
+  );
+  const now = new Date().toISOString();
+  database.exec("BEGIN");
+  try {
+    for (const formula of FORMULA_SEED) {
+      const subjectId = subjectByCode.get(formula.subjectCode);
+      if (!subjectId) continue;
+      const chapterId = chapterByKey.get(`${subjectId}:${formula.chapterCode}`);
+      if (!chapterId) continue;
+      const subtopicId = formula.subtopicName
+        ? (subtopicByKey.get(`${chapterId}:${formula.subtopicName.trim().toLowerCase()}`) ?? null)
+        : null;
+      insert.run(
+        subjectId,
+        chapterId,
+        subtopicId,
+        formula.title,
+        formula.expression,
+        formula.notes,
+        JSON.stringify(formula.tags),
+        now,
+        now,
+      );
+    }
+    database
+      .prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('formulasSeeded', '1')")
+      .run();
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function seedSyllabus(database: DatabaseSync): void {

@@ -9,6 +9,7 @@ import {
   ChevronUp,
   FileQuestion,
   FileUp,
+  Filter,
   Pencil,
   Play,
   Plus,
@@ -20,7 +21,7 @@ import {
 } from "lucide-react";
 import type { Difficulty, Question, QuestionType } from "../../shared/types.ts";
 import { DIFFICULTY_LABELS } from "../../shared/types.ts";
-import { api } from "../api/client.ts";
+import { api, type QuestionFilters } from "../api/client.ts";
 import { useAIStatus, useQuestions, useSyllabus } from "../api/hooks.ts";
 import { PageHeader } from "../components/Layout.tsx";
 import { AttemptModal } from "../components/AttemptModal.tsx";
@@ -143,6 +144,7 @@ export default function Questions() {
   const chapterId = num(searchParams.get("chapterId"));
   const subtopicId = num(searchParams.get("subtopicId"));
   const questionId = num(searchParams.get("questionId"));
+  const unattemptedOnly = searchParams.get("attempted") === "no";
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [difficulty, setDifficulty] = useState<Difficulty | "">("");
@@ -180,7 +182,7 @@ export default function Questions() {
     setSearchParams(next, { replace: true });
   };
 
-  const practiceFilters = {
+  const practiceFilters: QuestionFilters = {
     status: "approved",
     subjectId,
     chapterId,
@@ -188,6 +190,7 @@ export default function Questions() {
     questionId,
     difficulty: difficulty || undefined,
     search: deferredSearch || undefined,
+    attempted: unattemptedOnly ? "no" : undefined,
     limit: 150,
   };
   const practiceQuery = useQuestions(practiceFilters);
@@ -297,7 +300,7 @@ export default function Questions() {
 
   const clearFilters = () => {
     const next = new URLSearchParams(searchParams);
-    for (const key of ["subjectId", "chapterId", "subtopicId", "questionId"]) next.delete(key);
+    for (const key of ["subjectId", "chapterId", "subtopicId", "questionId", "attempted"]) next.delete(key);
     setSearchParams(next, { replace: true });
     setSearch("");
     setDifficulty("");
@@ -462,6 +465,19 @@ export default function Questions() {
                   />
                 </div>
               </Field>
+              <Button
+                variant={unattemptedOnly ? "primary" : "subtle"}
+                size="sm"
+                icon={<Filter size={13} />}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  if (unattemptedOnly) next.delete("attempted");
+                  else next.set("attempted", "no");
+                  setSearchParams(next, { replace: true });
+                }}
+              >
+                {unattemptedOnly ? "Unattempted only" : "Hide attempted"}
+              </Button>
               <div className="toolbar-actions">
                 <Button variant="ghost" size="sm" onClick={clearFilters}>
                   Reset
